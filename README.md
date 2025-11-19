@@ -1,146 +1,155 @@
-# na-radio-standalone (demo)
+# na-radio-standalone
 
-This repository contains a standalone demo script that uses a RADIO/CLIP-like
-image encoder to extract embeddings from a webcam and display label
-predictions in realtime.
+Standalone RADIO/CLIP webcam demo with a lightweight Flask UI. The app streams
+frames from a webcam (or video file), encodes them with the RADIO model when
+available, falls back to CLIP/open_clip, and finally a ResNet-50 encoder if
+nothing else can run.
 
-Key features:
-- Webcam capture with OpenCV
-- GPU detection and use (CUDA-enabled PyTorch) with fallback to CPU
-- Tries to use RADIO from NVLabs (via `torch.hub`) and falls back to a
-  ResNet-based encoder if RADIO isn't available
-- A live PCA plot of recent embeddings
+## Highlights
+- OpenCV capture with live label predictions and optional PCA overlay.
+- Automatic encoder selection with CUDA/CPU fallbacks.
+- Flask web front-end (`docker compose up` exposes http://localhost:5000).
+- Persistent Torch/Hugging Face caches when running through Docker Compose.
 
-Getting started
---------------
+## Quick start (pip venv)
 
-1. Create a Python virtual environment (pip) and install packages. Adjust `cudatoolkit` and `pytorch` according to your CUDA version. For NVIDIA Tesla P100 (CUDA 11.7/11.8 supported), use a pip wheel that matches your CUDA or install CPU-only PyTorch.
+1. Create a virtual environment and install PyTorch that matches your GPU (or
+   CPU-only wheel). The helper script can do this for you:
 
-  Example (pip venv, default path):
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   # Examples:
+   ./setup_pip_venv.sh --cuda 11.8                # installs CUDA 11.8 wheel
+   ./setup_pip_venv.sh --cuda 11.6 --cpu          # force CPU-only build
+   ./setup_pip_venv.sh --cuda 11.6 --torch-version 1.13.1+cu116
+   ./setup_pip_venv.sh --cuda 11.6 --torch-wheel-url https://download.pytorch.org/whl/cu116/torch-1.13.1%2Bcu116-cp310-cp310-manylinux_2_17_x86_64.whl
+   ```
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-# Install a CUDA-enabled wheel if you have a compatible GPU; otherwise use --cpu in the helper below
-./setup_pip_venv.sh --cuda 11.8
-```
-- The demo tries to load the RADIO model where possible. If unavailable or
-  too heavy to load, it falls back to a ResNet-50 encoder for embeddings.
-- For best performance with RADIO or large models, use an appropriate
-  CUDA-enabled PyTorch installation and sufficient GPU memory.
-- The fallback uses naive label embeddings if a proper text encoder is not
-  present; this is meant to provide a functional demo but isn't a true
-  zero-shot classification like CLIP.
-- If you want real CLIP-like zero-shot behavior, install `open_clip` or a
-  CLIP implementation, and the demo will use that when present.
-  Install packages if needed:
+2. Install optional extras for better zero-shot performance:
 
-  ```bash
-  pip install einops open_clip_torch
-  # or with pip: pip install einops
-  ```
+   ```bash
+   pip install einops open_clip_torch transformers
+   ```
 
-2. Run the webcam demo (default uses the `radio` model and device `cuda` if
-   available):
+3. Run the CLI demo (defaults to the RADIO encoder on CUDA when possible):
 
-```bash
-python naradio.py --mode webcam --labels "person,car,dog,cat,tree"
-```
+   ```bash
+   python naradio.py --mode webcam --labels "person,car,dog,cat,tree"
+   ```
 
-Nix users can enter the nix shell and run the demo. Example (pip venv preferred):
+### Notes for NixOS or pip-on-Nix
+- Use `nix-shell` (see `shell.nix`) to ensure required system libraries such as
+  `libstdc++` and `libgthread` are available before creating your pip venv.
+- OpenCV requirements differ per distro; for headless runs use
+  `opencv-python-headless`, otherwise install system GUI libs.
+
+## Docker / Docker Compose
 
 ```bash
-nix-shell # starts the shell defined in shell.nix
-# Option A: Use pip + venv (no conda) within the nix-shell (recommended for reproducible system libs via Nix):
-./setup_pip_venv.sh --cuda 11.8  # or --cpu to install CPU-only PyTorch
-source .venv/bin/activate
-python naradio.py --mode webcam --labels "person,car,dog,cat,tree"
+# Build the image
+docker build -t naradio-demo:latest --build-arg PYTORCH_CUDA=cpu .
 
-Note: This repository now uses a pip-based venv workflow instead of conda.
-If you are on NixOS, create the venv from inside `nix-shell` so the system libraries (like libstdc++.so.6) are available. Example:
+# Simple run with GPU and webcam
+docker run --gpus all --rm \
+  -p 5000:5000 \
+  --device /dev/video0:/dev/video0 \
+  -v /dev/dri:/dev/dri \
+  naradio-demo:latest
+```
+
+Compose is preferred for local development (adds caches and device mappings):
 
 ```bash
-nix-shell
-./setup_pip_venv.sh --cuda 11.8
-source .venv/bin/activate
+# CPU / generic run
+docker compose up --build
+
+# With webcam + GPU overrides
+docker compose -f docker-compose.yml \
+  -f docker-compose.override.yml \
+  -f docker-compose.gpu.yml up --build
 ```
 
-If you see an ImportError referencing `libstdc++.so.6` or `libgthread-2.0.so.0`, it often means the pip wheel depends on system libraries not present in your environment. Try `nix-shell` or install the appropriate system libraries as described in the Troubleshooting section.
+### Customizing the PyTorch base image
+The Docker image now inherits from `pytorch/pytorch`. Override
+`PYTORCH_BASE_IMAGE` (via `.env` or `--build-arg`) to match your GPU/driver.
+Example for Tesla P100 (needs CUDA 11.6 with `sm_60` support):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.gpu.yml \
+  build --build-arg PYTORCH_BASE_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
 ```
 
-3. Controls:
-- Press `q` or Escape to exit
+You can also set the same value in `.env`:
 
-Notes and caveats
------------------
-- The demo tries to load the RADIO model where possible. If unavailable or
-  too heavy to load, it falls back to a ResNet-50 encoder for embeddings.
-- For best performance with RADIO or large models, use an appropriate
-  CUDA-enabled PyTorch installation and sufficient GPU memory.
-- The fallback uses naive label embeddings if a proper text encoder is not
-  present; this is meant to provide a functional demo but isn't a true
-  zero-shot classification like CLIP.
-
-Contributing
-------------
-Add issues and PRs for improvements: better fallback text encoding,
-web UI, integration with specific language models, and dataset examples.
-
-Notes for NVIDIA Tesla P100
--------------------------
-Tesla P100 GPUs are compatible with CUDA 11.x. To make the best use of this
-demo and any heavy models (RADIO / CLIP), ensure to install a PyTorch build
-linked to a CUDA toolkit compatible with your system. Example installation for
-CUDA 11.8 is shown above; adjust it if your driver is older or different.
-
-The RADIO models can be large; they may require more GPU memory. If you run
-into OOM errors, try lowering `--input-resolution` or using a fallback encoder.
-
-Using Tesla P100 (and older GPUs)
----------------------------------
-If you see runtime warnings like "Tesla P100... is not compatible with the current PyTorch installation" this means the PyTorch build you installed was compiled for newer GPU architectures and your P100 (sm_60) isn't included. You have several options:
-
-- Use CPU: Run `python naradio.py --mode webcam --device cpu` to avoid GPU errors.
-  You can also use: `--force-cpu` to ensure the script doesn't attempt to use CUDA even if available:
-
-  ```bash
-  python naradio.py --mode webcam --device cpu --force-cpu --labels "person,car"
-  ```
-- Install a PyTorch binary that supports your GPU compute capability. For older GPUs (like P100), this may require installing an older PyTorch wheel or a wheel compiled for the CUDA toolkit that includes sm_60. Check the PyTorch archive on https://download.pytorch.org/whl/torch_stable.html and the "Get started" page for legacy builds.
-  If you prefer to install a wheel for older architectures, choose a wheel that matches your CUDA and GPU compatibility. For example, if you have CUDA 11.6, pick a 'cu116' wheel. Use the official wheel links here:
-
-  ```bash
-  # This is an example; pick the exact version for your driver and cuda version
-  pip install torch==1.13.1+cu116 torchvision==0.14.1+cu116 -f https://download.pytorch.org/whl/torch_stable.html
-  ```
-- Compile PyTorch from source with support for your GPU (this requires a suitable compiler and CUDA toolkit).
-- If it's feasible, upgrade to a newer GPU that is supported by the latest PyTorch wheels (sm_70/75/80+).
-
-Troubleshooting OpenCV / NixOS issues
-------------------------------------
-If you run into an error similar to "ImportError: libgthread-2.0.so.0: cannot open shared object file", this indicates a missing glib dependency for the OpenCV Python package in your environment. On NixOS, the recommended approaches are:
-
-- Use a Nix-enabled Python env or package that bundles OpenCV with the correct glib, or add `glib` to your shell environment, for example in a `shell.nix`/`flake.nix`.
-- Use `opencv-python-headless` in the Python environment if you do not need the GUI windows and prefer to avoid system GUI libraries; note that webcam capture may still require system libs for video input.
-- On Debian/Ubuntu: `sudo apt-get install libglib2.0-0` will provide the missing library.
-- For system packaging on Debian/Ubuntu, consider installing OpenCV via apt (`sudo apt-get install libopencv-dev python3-opencv`) or using `opencv-python` from pip. On NixOS, rely on the `shell.nix` for system OpenCV.
-
-NixOS example
---------------
-If you are on NixOS, add `glib` and `opencv` to your `shell.nix` or development shell to ensure the correct system libraries are present. A minimal `shell.nix` example:
-
-```nix
-{ pkgs ? import <nixpkgs> {} }:
-pkgs.mkShell {
-  buildInputs = [ pkgs.python310 pkgs.opencv pkgs.glib pkgs.ffmpeg ];
-  shellHook = ''
-    echo "Nix shell for naradio demo: OpenCV + glib available"
-  '';
-}
+```
+PYTORCH_BASE_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
 ```
 
-You can then enter the shell with `nix-shell` and run the demo (or use `nix develop`/`flake` style if preferred).
+After the container is running, you can confirm CUDA visibility with:
 
-If you still see issues, please check whether your OpenCV installation supports Video4Linux (v4l) for the camera capture on Linux.
+```bash
+docker exec -it na-radio-standalone-naradio-1 python - <<'PY'
+import torch
+print("cuda?", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("device", torch.cuda.get_device_name(0), "capability", torch.cuda.get_device_capability(0))
+PY
+```
 
+The compose files mount two volumes:
 
+| Volume        | Container path             | Purpose                                 |
+|---------------|----------------------------|-----------------------------------------|
+| `torch-cache` | `/root/.cache/torch`       | TorchHub repo + RADIO checkpoints       |
+| `hf-cache`    | `/root/.cache/huggingface` | Transformer tokenizers / secondary data |
+
+Keep these volumes around to avoid multi-GB downloads on every start.
+
+### Forcing GPU usage (legacy cards)
+The container reads a few optional environment variables before launching:
+
+- `ENCODER_DEVICE` (`cuda` / `cpu`) to explicitly pick the encoder device.
+- `FORCE_GPU` (`1`/`true`) to skip compute-capability safety checks.
+- `MIN_CC` (e.g., `6.0`) to set the minimum CUDA compute capability used by the safety check.
+- `GPU_DEVICE` (default `/dev/nvidia0`) to map a specific GPU device into the container if you use manual `--device` rules instead of `gpus: all`.
+
+Example for Tesla P100 (compute capability 6.0):
+
+```bash
+export ENCODER_DEVICE=cuda
+export FORCE_GPU=1
+export MIN_CC=6.0
+docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.gpu.yml up --build
+```
+
+## Older GPUs (Tesla P100, etc.)
+
+Recent PyTorch wheels drop support for `sm_60`. If you see warnings about
+unsupported compute capability, pick an older `pytorch/pytorch` base (e.g.,
+`pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime`) or run everything in CPU mode:
+
+```bash
+python naradio.py --mode webcam --device cpu --force-cpu
+```
+
+You can also pass `--min-cc 6.0` to `naradio.py` to relax the automatic CUDA
+compatibility check if you know your wheel/image is compatible.
+
+## Troubleshooting
+
+- **Missing `libgthread-2.0.so.0` / other OpenCV deps:** install
+  `libglib2.0-0` (Debian/Ubuntu) or add `glib` via Nix.
+- **No webcam available:** Use `--video-file path.mp4` or inject the file via
+  the `VIDEO_FILE` environment variable for the web app.
+- **RADIO downloads every run:** ensure the cache volumes exist (Compose) or
+  mount `~/.cache/torch` inside the container manually.
+- **Label encoding failures:** install `transformers` (already listed in
+  `requirements.txt`) so the RADIO adaptor tokenizer can load.
+
+## Contributing
+
+Issues and pull requests are welcome. Useful areas:
+- Better fallbacks or new language adaptors.
+- Web UI polish (status indicators, controls).
+- Tests for encoder edge cases and preprocessing.

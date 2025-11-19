@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>na-radio demo</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+      .container { padding: 10px; display:flex; gap:10px; }
+      .frame { width: 640px; }
+      .preds { margin-left: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div>
+        <h3>Webcam Feed</h3>
+  <div id="status" style="margin-bottom:8px;color:#333;">Status: connecting... <span id="encoder-name"></span> <span id="pred-enabled"></span></div>
+        <img class="frame" src="/video_feed" />
+      </div>
+      <div class="preds">
+        <h3>Predictions</h3>
+        <ul id="pred-list"></ul>
+      </div>
+    </div>
+    <script>
+      async function updatePredictions() {
+        try {
+          const resp = await fetch('/predictions');
+          const data = await resp.json();
+          const ul = document.getElementById('pred-list');
+          ul.innerHTML = '';
+          for (const [label, score] of data) {
+            const li = document.createElement('li');
+            li.textContent = `${label}: ${score.toFixed(3)}`;
+            ul.appendChild(li);
+          }
+        } catch (e) {
+          console.warn('Pred fetch failed', e);
+        }
+      }
+      async function updateStatus() {
+        try {
+          const resp = await fetch('/status');
+          const data = await resp.json();
+          const st = document.getElementById('status');
+          if (data.camera_open) {
+            st.textContent = 'Status: Camera connected';
+            st.style.color = 'green';
+                if (data.encoder) {
+                  document.getElementById('encoder-name').textContent = `(encoder: ${data.encoder})`;
+                }
+            if (data.predictions_enabled) {
+              document.getElementById('pred-enabled').textContent = ' (predictions: ON)';
+            } else {
+              document.getElementById('pred-enabled').textContent = ' (predictions: OFF)';
+            }
+              } else {
+            st.textContent = 'Status: No camera - make sure to run container with --device /dev/video0 or pass VIDEO_FILE';
+            st.style.color = 'red';
+          }
+        } catch (e) {
+          console.warn('Status fetch failed', e);
+        }
+      }
+      setInterval(updateStatus, 1000);
+      updateStatus();
+      setInterval(updatePredictions, 1000);
+      updatePredictions();
+    </script>
+  </body>
+  </html>

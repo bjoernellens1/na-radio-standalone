@@ -1,0 +1,21 @@
+# Minimal Python requirements for the na-radio webcam demo
+# Minimal Python requirements for the na-radio webcam demo
+# torch and torchvision are installed by the setup scripts/Dockerfile to match the selected runtime (CPU vs CUDA)
+# They are deliberately removed to avoid accidental installation of mismatched GPU wheels
+numpy
+# If you plan to use a full GUI (cv2.imshow) and camera capture, install opencv-python
+# On some distros / NixOS, you may prefer opencv-python-headless and a separate v4l package
+opencv-python
+matplotlib
+timm
+typing-extensions
+einops
+open_clip_torch==2.24.0
+imageio
+flask
+gunicorn
+werkzeug
+transformers
+# Optional but recommended when running RADIO/CLIP models
+# open_clip_torch
+# sentence-transformers

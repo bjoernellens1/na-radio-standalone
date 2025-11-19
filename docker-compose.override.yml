@@ -1,0 +1,18 @@
+services:
+  naradio:
+    # Map the physical webcam device into the container; adjust if your device differs
+    devices:
+      - "/dev/video0:/dev/video0"
+    # Grant access to GPU via NVIDIA device_requests; Docker Compose v2+ supports this in recent compose builds.
+    # NOTE: If your Docker Compose supports `device_requests` and you want full GPU support,
+    # create a file `docker-compose.gpu.yml` (see repo) and use it with `-f` to add GPU device requests.
+    environment:
+      # Pass through a video file (optional) - comment out to use the webcam
+      - VIDEO_FILE=
+      - LABELS=person,car,dog,cat,tree
+    volumes:
+      - "/dev/dri:/dev/dri"  # if using GPU / DRI devices (optional)
+      - torch-cache:/root/.cache/torch
+      - hf-cache:/root/.cache/huggingface
+    stdin_open: true
+    tty: true

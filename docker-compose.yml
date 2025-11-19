@@ -1,0 +1,32 @@
+## Compose file for CPU-only or portable runs. Use additional override files for device and GPU mapping.
+services:
+  naradio:
+    build:
+      context: .
+      args:
+        PYTORCH_BASE_IMAGE: ${PYTORCH_BASE_IMAGE:-pytorch/pytorch:2.7.1-cuda11.8-cudnn9-runtime}
+    image: ghcr.io/${COMPOSE_PROJECT_NAME:-naradio}/naradio:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=5000
+      - LABELS=person,car,dog,cat,tree
+      - TORCH_HOME=/root/.cache/torch
+      - HF_HOME=/root/.cache/huggingface
+      - ENCODER_DEVICE=${ENCODER_DEVICE:-}
+      - FORCE_GPU=${FORCE_GPU:-0}
+      - MIN_CC=${MIN_CC:-7.0}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/predictions"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - torch-cache:/root/.cache/torch
+      - hf-cache:/root/.cache/huggingface
+
+volumes:
+  torch-cache:
+  hf-cache:
