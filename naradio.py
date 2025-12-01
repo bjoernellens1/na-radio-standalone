@@ -624,6 +624,41 @@ class NARadioEncoder(LangSpatialGlobalImageEncoder):
   def get_nearest_size(self, h, w):
     return self.model.get_nearest_supported_resolution(h, w)
 
+  def compute_heatmap(self, rgb_image: torch.FloatTensor, label_vec: torch.FloatTensor) -> torch.FloatTensor:
+    """Compute a heatmap for a specific label vector.
+    
+    Args:
+        rgb_image: (1, 3, H, W) input image
+        label_vec: (1, D) label vector
+        
+    Returns:
+        heatmap: (H, W) float tensor with values in [0, 1]
+    """
+    with torch.no_grad():
+        # Get spatial features
+        feat_map = self.encode_image_to_feat_map(rgb_image) # (1, C, H', W')
+        
+        # Align with language if needed
+        if self.return_radio_features:
+             feat_map = self.align_spatial_features_with_language(feat_map)
+             
+        # Normalize features
+        feat_map = feat_map / (feat_map.norm(dim=1, keepdim=True) + 1e-8)
+        label_vec = label_vec / (label_vec.norm(dim=-1, keepdim=True) + 1e-8)
+        
+        # Compute similarity: (1, C, H', W') * (1, C, 1, 1) -> (1, H', W')
+        sim_map = (feat_map * label_vec.view(1, -1, 1, 1)).sum(dim=1)
+        
+        # Upsample to image resolution
+        H, W = rgb_image.shape[-2:]
+        heatmap = F.interpolate(sim_map.unsqueeze(0), size=(H, W), mode='bicubic', align_corners=False)
+        heatmap = heatmap.squeeze()
+        
+        # Normalize to [0, 1] for visualization
+        heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
+        
+        return heatmap
+
 
 def cosine_similarity_matrix(image_vec: torch.FloatTensor, label_vecs: torch.FloatTensor):
   """Compute cosine similarity between image vectors (B x D) and label vectors (L x D).

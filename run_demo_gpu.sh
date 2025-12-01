@@ -15,6 +15,7 @@ docker run --rm -it \
   --gpus all \
   -p 5001:5000 \
   --env-file .env \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   -v torch-cache:/root/.cache/torch \
   -v hf-cache:/root/.cache/huggingface \
   -v /dev/video0:/dev/video0 \

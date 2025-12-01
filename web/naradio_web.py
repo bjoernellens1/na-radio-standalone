@@ -25,58 +25,179 @@ camera_open = False
 encoder_name = None
 # predictions enabled flag (set when label vectors are available)
 predictions_enabled = False
+# monitoring
+current_fps = 0.0
+last_inference_time = 0.0
+# dynamic labels
+current_labels = []
+label_update_needed = False
+# object marking
+heatmap_enabled = False
+# async state
+latest_heatmap = None
+heatmap_lock = threading.Lock()
 
 
-def camera_loop(device_index=0, input_resolution=(512, 512), camera_file=None, encoder=None, label_vecs=None, labels=None, interval=0.1):
-    global current_frame, current_pred, predictions_enabled
+def capture_loop(device_index=0, camera_file=None):
+    global current_frame, camera_open, current_fps
     cap = None
     if camera_file is None:
         cap = cv2.VideoCapture(device_index)
     else:
         cap = cv2.VideoCapture(camera_file)
-    global camera_open
+    
     if not cap.isOpened():
         print(f"Camera device {device_index} not opened; cap.isOpened() == False. camera_file={camera_file}")
         camera_open = False
+        return
     else:
         camera_open = True
-    label_vecs_local = label_vecs
-    retry_interval = 5.0  # seconds between encode-label attempts when they fail
-    next_label_retry = 0.0
+        
+    frame_count = 0
+    start_time = time.time()
+    
     while True:
         ret, frame = cap.read()
         if not ret:
+            # If video file, rewind
+            if camera_file is not None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
             time.sleep(0.1)
             continue
-        # Update latest frame outside of expensive computation
+            
         with frame_lock:
             current_frame = frame.copy()
+            
+        frame_count += 1
+        elapsed = time.time() - start_time
+        if elapsed >= 1.0:
+            current_fps = frame_count / elapsed
+            frame_count = 0
+            start_time = time.time()
+            
+        time.sleep(0.001) # Yield slightly to avoid hogging CPU
+
+
+def inference_loop(encoder=None, label_vecs=None, labels=None, input_resolution=(512, 512)):
+    global current_pred, predictions_enabled, last_inference_time, current_labels, label_update_needed, latest_heatmap
+    
+    # Use global current_labels if labels argument is not provided or to init
+    global current_labels, label_update_needed
+    if labels:
+        current_labels = labels
+    
+    # Local state for the loop
+    loop_labels = list(current_labels)
+    label_vecs_local = label_vecs
+    
+    retry_interval = 5.0
+    next_label_retry = 0.0
+    
+    while True:
+        # Get latest frame
+        frame_to_process = None
+        with frame_lock:
+            if current_frame is not None:
+                frame_to_process = current_frame.copy()
+        
+        if frame_to_process is None:
+            time.sleep(0.1)
+            continue
 
         preds = []
-        if encoder is not None and labels:
+        
+        # Check for label updates
+        if label_update_needed:
+            loop_labels = list(current_labels)
+            label_vecs_local = None # Force re-compute
+            label_update_needed = False
+            print(f"Labels updated in inference loop: {loop_labels}")
+
+        if encoder is not None and loop_labels:
             now = time.time()
             if label_vecs_local is None and now >= next_label_retry:
                 next_label_retry = now + retry_interval
                 try:
-                    label_vecs_local = encoder.encode_labels(labels).to(encoder.device)
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    # Batched encoding to avoid OOM with large vocabularies
+                    batch_size = 8
+                    vecs_list = []
+                    for i in range(0, len(loop_labels), batch_size):
+                        batch = loop_labels[i:i+batch_size]
+                        if i % 40 == 0:
+                            print(f"Encoding batch {i}/{len(loop_labels)}")
+                        
+                        # Periodic cache clearing to avoid fragmentation
+                        if i > 0 and i % 100 == 0 and torch.cuda.is_available():
+                             torch.cuda.empty_cache()
+                             
+                        with torch.no_grad():
+                            v = encoder.encode_labels(batch)
+                            vecs_list.append(v.cpu()) # Move to CPU temporarily to save GPU memory
+                        
+                        # Yield control to allow other threads/processes to run
+                        time.sleep(0.02)
+                    
+                    # Concatenate and move back to GPU
+                    label_vecs_local = torch.cat(vecs_list, dim=0).to(encoder.device)
+                    
                     predictions_enabled = True
-                    print('Precomputed label vectors successfully')
+                    print(f'Precomputed {len(loop_labels)} label vectors successfully')
                 except Exception as e:
                     print(f'Failed to precompute label vectors; retrying in {int(retry_interval)}s', repr(e))
                     label_vecs_local = None
+            
             if label_vecs_local is not None:
                 try:
-                    preds = _compute_predictions(frame, encoder, label_vecs_local, labels, input_resolution)
+                    t0 = time.time()
+                    preds = _compute_predictions(frame_to_process, encoder, label_vecs_local, loop_labels, input_resolution)
+                    last_inference_time = (time.time() - t0) * 1000  # ms
+                    
+                    # Compute heatmap for top prediction if enabled
+                    new_heatmap = None
+                    if heatmap_enabled and preds and hasattr(encoder, 'compute_heatmap'):
+                        top_label = preds[0][0]
+                        try:
+                            # Find index of top label
+                            idx = loop_labels.index(top_label)
+                            top_vec = label_vecs_local[idx].unsqueeze(0)
+                            
+                            # Preprocess frame again (could optimize this)
+                            desired_res = getattr(encoder, 'input_resolution', input_resolution)
+                            t = preprocess_frame(frame_to_process, input_resolution=desired_res).to(encoder.device)
+                            
+                            hm = encoder.compute_heatmap(t, top_vec)
+                            hm_np = hm.cpu().numpy()
+                            
+                            # Overlay heatmap
+                            hm_uint8 = (hm_np * 255).astype(np.uint8)
+                            heatmap_img = cv2.applyColorMap(hm_uint8, cv2.COLORMAP_JET)
+                            
+                            # Resize heatmap to frame size if needed
+                            if heatmap_img.shape[:2] != frame_to_process.shape[:2]:
+                                heatmap_img = cv2.resize(heatmap_img, (frame_to_process.shape[1], frame_to_process.shape[0]))
+                            
+                            new_heatmap = heatmap_img
+                                
+                        except Exception as e:
+                            print("Heatmap error:", e)
+                    
+                    with heatmap_lock:
+                        latest_heatmap = new_heatmap
+                            
                 except Exception as e:
                     import traceback
                     print('Prediction error:', repr(e))
                     traceback.print_exc()
                     preds = []
 
-        with frame_lock:
+        with frame_lock: # Reuse frame_lock for preds to keep it simple, or could use a new lock
             current_pred = preds
 
-        time.sleep(interval)
+        time.sleep(0.01) # Don't spin too fast if inference is super fast
 
 
 def _compute_predictions(frame, encoder, label_vecs, labels, input_resolution):
@@ -101,12 +222,14 @@ def _compute_predictions(frame, encoder, label_vecs, labels, input_resolution):
 
 
 def gen_frames():
-    global current_frame
+    global current_frame, latest_heatmap
     while True:
+        img = None
+        hm = None
+        
         with frame_lock:
             if current_frame is None:
                 img = np.zeros((480, 640, 3), dtype=np.uint8)
-                # Overlay helpful message if camera is not connected
                 try:
                     import cv2 as _cv2
                     if not camera_open:
@@ -115,11 +238,23 @@ def gen_frames():
                     pass
             else:
                 img = current_frame.copy()
+        
+        with heatmap_lock:
+            if latest_heatmap is not None:
+                hm = latest_heatmap.copy()
+        
+        # Blend if heatmap exists and is enabled
+        if heatmap_enabled and hm is not None:
+             # Resize hm if needed (should match img)
+            if hm.shape[:2] != img.shape[:2]:
+                hm = cv2.resize(hm, (img.shape[1], img.shape[0]))
+            img = cv2.addWeighted(img, 0.6, hm, 0.4, 0)
+
         ret, buffer = cv2.imencode('.jpg', img)
         frame_bytes = buffer.tobytes()
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        time.sleep(0.05)
+        time.sleep(0.033) # ~30 FPS display loop
 
 
 @app.route('/')
@@ -144,7 +279,65 @@ def status():
         'camera_open': camera_open,
         'encoder': encoder_name,
         'predictions_enabled': predictions_enabled,
+        'fps': round(current_fps, 1),
+        'inference_time_ms': round(last_inference_time, 1),
+        'heatmap_enabled': heatmap_enabled
     })
+
+
+@app.route('/toggle_heatmap', methods=['POST'])
+def toggle_heatmap():
+    global heatmap_enabled
+    heatmap_enabled = not heatmap_enabled
+    return jsonify({'heatmap_enabled': heatmap_enabled})
+
+
+from web.vocabularies import IMAGENET_CLASSES, COCO_CLASSES
+
+@app.route('/update_labels', methods=['POST'])
+def update_labels():
+    global predictions_enabled, current_labels, label_update_needed
+    data = request.json
+    mode = data.get('mode', 'custom')
+    
+    new_labels = []
+    if mode == 'imagenet':
+        new_labels = IMAGENET_CLASSES
+    elif mode == 'coco':
+        new_labels = COCO_CLASSES
+    else:
+        # Custom mode
+        new_labels_str = data.get('labels', '')
+        if not new_labels_str:
+            return jsonify({'error': 'No labels provided'}), 400
+        new_labels = [l.strip() for l in new_labels_str.split(',') if l.strip()]
+        
+    if not new_labels:
+        return jsonify({'error': 'Invalid labels'}), 400
+
+    # Update global state
+    current_labels = new_labels
+    label_update_needed = True
+    predictions_enabled = False # Disable until re-computed
+    
+    return jsonify({'success': True, 'labels': new_labels, 'mode': mode})
+
+@app.route('/reset_inference', methods=['POST'])
+def reset_inference():
+    global predictions_enabled, label_update_needed, current_labels
+    
+    print("Resetting inference state...")
+    predictions_enabled = False
+    
+    # Force label update to trigger re-encoding
+    label_update_needed = True
+    
+    # Clear CUDA cache if available
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        print("CUDA cache cleared")
+        
+    return jsonify({'success': True})
 
 
 def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
@@ -169,9 +362,14 @@ def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
         print('Failed to encode labels; will attempt to compute per-frame but this is expensive:', repr(e))
         label_vecs = None
         predictions_enabled = False
-    # start camera thread
-    thr = threading.Thread(target=camera_loop, args=(device_index, (512,512), video_file, enc, label_vecs, labels), daemon=True)
-    thr.start()
+    # start capture thread
+    capture_thr = threading.Thread(target=capture_loop, args=(device_index, video_file), daemon=True)
+    capture_thr.start()
+    
+    # start inference thread
+    inference_thr = threading.Thread(target=inference_loop, args=(enc, label_vecs, labels, (512,512)), daemon=True)
+    inference_thr.start()
+    
     print(f'Starting web server with encoder: {name} on host {host}:{port}')
     app.run(host=host, port=port, threaded=True)
 
