@@ -4,7 +4,7 @@ services:
     build:
       context: .
       args:
-        PYTORCH_BASE_IMAGE: ${PYTORCH_BASE_IMAGE:-pytorch/pytorch:2.7.1-cuda11.8-cudnn9-runtime}
+        PYTORCH_BASE_IMAGE: ${PYTORCH_BASE_IMAGE:-pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime}
     image: ghcr.io/${COMPOSE_PROJECT_NAME:-naradio}/naradio:latest
     ports:
       - "5000:5000"
@@ -19,7 +19,7 @@ services:
       - MIN_CC=${MIN_CC:-7.0}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/predictions"]
+      test: [ "CMD", "curl", "-f", "http://localhost:5000/predictions" ]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -1,4 +1,4 @@
-ARG PYTORCH_BASE_IMAGE=pytorch/pytorch:2.7.1-cuda11.8-cudnn9-runtime
+ARG PYTORCH_BASE_IMAGE=pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime
 FROM ${PYTORCH_BASE_IMAGE}
 
 # Install additional system packages required by the app
@@ -11,7 +11,7 @@ WORKDIR /app
 # Install Python dependencies
 COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade pip && \
-    python -m pip install -r /app/requirements.txt
+    python -m pip install -r /app/requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
 
 # Emit build info for easier debugging
 RUN echo "Using base image: ${PYTORCH_BASE_IMAGE}" && \

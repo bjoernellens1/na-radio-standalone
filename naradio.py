@@ -441,7 +441,21 @@ class NARadioEncoder(LangSpatialGlobalImageEncoder):
     self.return_radio_features = return_radio_features
     self.prompt_templates = list(self.DEFAULT_PROMPT_TEMPLATES)
     self._using_cuda = self.device.startswith('cuda') and torch.cuda.is_available()
+    if self._using_cuda:
+      props = torch.cuda.get_device_properties(torch.cuda.current_device())
+      if props.major < 7:
+        print(f"Warning: GPU compute capability {props.major}.{props.minor} is too old for Triton compiler (requires >= 7.0). Disabling compilation.")
+        compile = False
     self.compile = bool(compile and self._using_cuda)
+    
+    # Safeguard: Suppress Triton/Inductor errors on older GPUs
+    if self._using_cuda and not self.compile:
+      try:
+        import torch._dynamo as dynamo
+        dynamo.config.suppress_errors = True
+        print("Explicitly suppressed TorchDynamo errors for compatibility.")
+      except ImportError:
+        pass
     self.amp = bool(amp and self._using_cuda)
     self._autocast_device_type = "cuda" if self._using_cuda else "cpu"
     self._autocast_dtype = torch.float16 if self._using_cuda else torch.bfloat16
