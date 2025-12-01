@@ -31,6 +31,9 @@ last_inference_time = 0.0
 # dynamic labels
 current_labels = []
 label_update_needed = False
+# resolution control
+resolution_update_needed = False
+pending_resolution = None
 # object marking
 heatmap_enabled = False
 # async state
@@ -113,6 +116,24 @@ def inference_loop(encoder=None, label_vecs=None, labels=None, input_resolution=
             label_vecs_local = None # Force re-compute
             label_update_needed = False
             print(f"Labels updated in inference loop: {loop_labels}")
+
+        # Check for resolution updates
+        global resolution_update_needed, pending_resolution
+        if resolution_update_needed and pending_resolution:
+            input_resolution = pending_resolution
+            if hasattr(encoder, 'input_resolution'):
+                try:
+                    encoder.input_resolution = input_resolution
+                    print(f"Encoder resolution updated to {input_resolution}")
+                except Exception as e:
+                    print(f"Failed to update encoder resolution: {e}")
+            else:
+                print(f"Updated local resolution to {input_resolution} (encoder property not found)")
+            
+            resolution_update_needed = False
+            # Optional: Clear label vectors if resolution change affects them (unlikely for RADIO/CLIP but safe)
+            # label_vecs_local = None 
+
 
         if encoder is not None and loop_labels:
             now = time.time()
@@ -338,6 +359,22 @@ def reset_inference():
         print("CUDA cache cleared")
         
     return jsonify({'success': True})
+
+@app.route('/update_resolution', methods=['POST'])
+def update_resolution():
+    global resolution_update_needed, pending_resolution
+    data = request.json
+    width = data.get('width')
+    height = data.get('height')
+    
+    if not width or not height:
+        return jsonify({'error': 'Width and height required'}), 400
+        
+    # Set pending resolution (H, W) for encoder
+    pending_resolution = (int(height), int(width))
+    resolution_update_needed = True
+    
+    return jsonify({'success': True, 'resolution': pending_resolution})
 
 
 def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,

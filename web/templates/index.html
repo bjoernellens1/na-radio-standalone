@@ -103,6 +103,18 @@
               </div>
 
               <div class="mb-3">
+                <label for="resolutionSelect" class="form-label">Processing Resolution</label>
+                <select class="form-select" id="resolutionSelect" onchange="updateResolution()">
+                  <option value="1920x1080">1920x1080 (High)</option>
+                  <option value="1280x720">1280x720</option>
+                  <option value="800x600">800x600</option>
+                  <option value="640x480">640x480</option>
+                  <option value="512x512" selected>512x512 (Default)</option>
+                  <option value="320x240">320x240 (Fast)</option>
+                </select>
+              </div>
+
+              <div class="mb-3">
                 <button class="btn btn-warning w-100" onclick="resetInference()">
                   <i class="bi bi-arrow-counterclockwise"></i> Reset Inference
                 </button>
@@ -265,6 +277,26 @@
             console.error(err);
             alert('Error resetting inference.');
           });
+      }
+
+      function updateResolution() {
+        const select = document.getElementById('resolutionSelect');
+        const [w, h] = select.value.split('x').map(Number);
+
+        fetch('/update_resolution', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ width: w, height: h })
+        })
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              console.log('Resolution updated to', w, h);
+            } else {
+              alert('Failed to update resolution');
+            }
+          })
+          .catch(err => console.error('Error updating resolution:', err));
       }
       setInterval(updateStatus, 1000);
       updateStatus();

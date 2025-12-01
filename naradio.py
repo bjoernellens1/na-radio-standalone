@@ -177,6 +177,7 @@ class GaussKernelAttn(nn.Module):
     self.attn_addition = GaussKernelAttn.get_attention_addition(
       *n_patches, window, self.num_prefix_tokens
     ).unsqueeze(0)
+    self.input_resolution = input_resolution
 
 
 def get_device(prefer_cuda: bool = True) -> str:
@@ -507,7 +508,13 @@ class NARadioEncoder(LangSpatialGlobalImageEncoder):
         if self.compile:
           self.model.compile(fullgraph=True, options={"triton.cudagraphs":True})
       else:
-        raise ValueError(f"Incompatible input resolution {value}")
+        # Auto-adjust to nearest supported size
+        h, w = value
+        nearest_h, nearest_w = self.get_nearest_size(h, w)
+        print(f"Warning: Resolution {value} is not compatible with patch size. Adjusting to nearest supported size: ({nearest_h}, {nearest_w})")
+        self.model.model.blocks[-1].attn.update_input_resolution((nearest_h, nearest_w))
+        if self.compile:
+          self.model.compile(fullgraph=True, options={"triton.cudagraphs":True})
     else:
       raise ValueError("Input resolution must be a tuple of two ints")
 
