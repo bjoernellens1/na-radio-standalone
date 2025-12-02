@@ -1,40 +1,44 @@
 ARG TARGET_ARCH=intel
-# Define base images
 ARG INTEL_BASE_IMAGE=python:3.10-slim
 ARG NVIDIA_BASE_IMAGE=pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime
 
-# Intermediate stage to select base image
-FROM ${INTEL_BASE_IMAGE} as base-intel
+# --- Intel Builder Stage ---
+FROM ${INTEL_BASE_IMAGE} as build-intel
 ENV ARCH_TYPE=intel
+WORKDIR /app
 
-FROM ${NVIDIA_BASE_IMAGE} as base-nvidia
-ENV ARCH_TYPE=nvidia
-
-# Final stage
-FROM base-${TARGET_ARCH} as final
-
-# Install system packages
+# Install system packages for Intel
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 git \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# Copy requirements
+# Install Python dependencies
 COPY requirements-base.txt /app/requirements-base.txt
 COPY requirements-intel.txt /app/requirements-intel.txt
-
-# Install dependencies based on ARCH_TYPE
 RUN python -m pip install --upgrade pip && \
-    if [ "$ARCH_TYPE" = "intel" ]; then \
-        echo "Installing Intel dependencies..." && \
-        python -m pip install -r /app/requirements-intel.txt && \
-        python -m pip install -r /app/requirements-base.txt; \
-    else \
-        echo "Installing Base dependencies for NVIDIA build..." && \
-        python -m pip install -r /app/requirements-base.txt; \
-    fi
+    python -m pip install -r /app/requirements-intel.txt && \
+    python -m pip install -r /app/requirements-base.txt
+
+# --- NVIDIA Builder Stage ---
+FROM ${NVIDIA_BASE_IMAGE} as build-nvidia
+ENV ARCH_TYPE=nvidia
+WORKDIR /app
+
+# Install system packages for NVIDIA (Ubuntu based usually)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies (Torch already present)
+COPY requirements-base.txt /app/requirements-base.txt
+RUN python -m pip install --upgrade pip && \
+    python -m pip install -r /app/requirements-base.txt
+
+# --- Final Stage ---
+FROM build-${TARGET_ARCH} as final
+WORKDIR /app
 
 # Emit build info
 RUN echo "Build Architecture: ${ARCH_TYPE}" && \
