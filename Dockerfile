@@ -12,7 +12,8 @@ WORKDIR /app
 # Install Python dependencies
 COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade pip && \
-    python -m pip install -r /app/requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
+    python -m pip install -r /app/requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118 && \
+    python -m pip install openvino openvino-dev
 
 # Emit build info for easier debugging
 RUN echo "Using base image: ${PYTORCH_BASE_IMAGE}" && \

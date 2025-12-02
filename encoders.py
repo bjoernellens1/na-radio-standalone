@@ -11,6 +11,57 @@ import cv2
 
 from utils import get_device, preprocess_frame
 
+try:
+    import openvino as ov
+    OPENVINO_AVAILABLE = True
+except ImportError:
+    OPENVINO_AVAILABLE = False
+
+class OpenVINOEncoderWrapper:
+    """Wrapper to run an OpenVINO compiled model with the same interface as the PyTorch encoder."""
+    def __init__(self, ov_compiled_model, original_encoder):
+        self.compiled_model = ov_compiled_model
+        self.infer_request = self.compiled_model.create_infer_request()
+        self.original_encoder = original_encoder
+        self.device = "cpu" # OpenVINO manages its own devices, but we expose "cpu" to the app
+        
+        # Copy necessary attributes from original encoder
+        self.input_resolution = getattr(original_encoder, 'input_resolution', (512, 512))
+        self.encode_labels = original_encoder.encode_labels # Keep original label encoding (usually cached or runs on CPU)
+        # If label encoding depends on the model, we might need to export that too, 
+        # but for RADIO, labels are text -> CLIP text encoder. 
+        # We can keep the text encoder in PyTorch (CPU) as it runs once, 
+        # and accelerate the image encoder (runs every frame).
+        
+    def encode_image_to_vector(self, rgb_image: torch.FloatTensor) -> torch.FloatTensor:
+        # rgb_image is (1, 3, H, W) tensor
+        # OpenVINO expects numpy
+        if isinstance(rgb_image, torch.Tensor):
+            input_data = rgb_image.detach().cpu().numpy()
+        else:
+            input_data = rgb_image
+            
+        # Run inference
+        # We assume the model has one input and one output for the global vector
+        # Or we need to know the output name.
+        # For RADIO, we'll export the encode_image_to_vector part.
+        
+        results = self.infer_request.infer([input_data])
+        # results is a dict or list?
+        # If single output, we can get it.
+        output_tensor = list(results.values())[0]
+        
+        return torch.from_numpy(output_tensor)
+
+    def encode_image_to_feat_map(self, rgb_image: torch.FloatTensor) -> torch.FloatTensor:
+        raise NotImplementedError("OpenVINO wrapper currently only supports global vector encoding")
+
+    def unload(self):
+        del self.infer_request
+        del self.compiled_model
+        self.original_encoder.unload()
+
+
 class LangSpatialGlobalImageEncoder(ABC):
     def __init__(self, device: Optional[str] = None):
         self.device = device or get_device()
@@ -668,6 +719,51 @@ class NARadioEncoder(LangSpatialGlobalImageEncoder):
         heatmap = heatmap.squeeze()
         heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
         return heatmap
+
+    def convert_to_openvino(self):
+        if not OPENVINO_AVAILABLE:
+            print("OpenVINO not available.")
+            return None
+            
+        print("Converting RADIO model to OpenVINO...")
+        
+        # We need to wrap the image encoding part into a nn.Module that returns just the vector
+        class RadioImageModel(nn.Module):
+            def __init__(self, parent):
+                super().__init__()
+                self.parent = parent
+                
+            def forward(self, x):
+                return self.parent.encode_image_to_vector(x)
+                
+        wrapper = RadioImageModel(self)
+        wrapper.eval()
+        
+        # Create dummy input
+        H, W = self.input_resolution
+        dummy_input = torch.randn(1, 3, H, W).to(self.device)
+        
+        try:
+            # Convert
+            ov_model = ov.convert_model(wrapper, example_input=dummy_input)
+            
+            # Compile for GPU if available, else CPU
+            core = ov.Core()
+            devices = core.available_devices
+            device = "CPU"
+            if "GPU" in devices:
+                device = "GPU"
+            
+            print(f"Compiling OpenVINO model for {device}...")
+            compiled_model = core.compile_model(ov_model, device)
+            
+            return OpenVINOEncoderWrapper(compiled_model, self)
+            
+        except Exception as e:
+            print(f"OpenVINO conversion failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
 
 class SigLIPEncoder(LangSpatialGlobalImageEncoder):

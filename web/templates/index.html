@@ -102,7 +102,7 @@
             <!-- Model Selection -->
             <div class="mb-4">
               <label for="modelSelect" class="form-label">Model</label>
-              <select class="form-select" id="modelSelect" onchange="changeModel()">
+              <select class="form-select mb-2" id="modelSelect" onchange="changeModel()">
                 <option value="radio" selected>RADIO-v2.5</option>
                 <option value="siglip">SigLIP</option>
                 <option value="clip">OpenCLIP</option>
@@ -110,8 +110,10 @@
                 <option value="yolo">Yolo-World</option>
                 <option value="openyolo3d">OpenYOLO3D</option>
                 <option value="resnet">ResNet50 (Fallback)</option>
-
               </select>
+              <button class="btn btn-outline-info w-100" onclick="enableOpenVINO()">
+                Enable OpenVINO Acceleration
+              </button>
             </div>
 
             <!-- Object Marking -->
@@ -407,6 +409,33 @@
             alert('Error switching model');
           })
           .finally(() => {
+            btn.disabled = false;
+          });
+      }
+
+      function enableOpenVINO() {
+        const btn = document.querySelector('button[onclick="enableOpenVINO()"]');
+        const orig = btn.textContent;
+        btn.textContent = 'Compiling... (may take time)';
+        btn.disabled = true;
+
+        fetch('/enable_openvino', { method: 'POST' })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              alert('OpenVINO enabled! Model: ' + data.model);
+              btn.textContent = 'OpenVINO Enabled';
+              btn.className = 'btn btn-info w-100';
+            } else {
+              alert('Failed: ' + data.error);
+              btn.textContent = orig;
+              btn.disabled = false;
+            }
+          })
+          .catch(e => {
+            console.error(e);
+            alert('Error enabling OpenVINO');
+            btn.textContent = orig;
             btn.disabled = false;
           });
       }

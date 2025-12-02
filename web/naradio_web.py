@@ -649,6 +649,37 @@ def change_model():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/enable_openvino', methods=['POST'])
+def enable_openvino():
+    global current_encoder, encoder_name, predictions_enabled, label_update_needed
+    
+    with model_lock:
+        if current_encoder is None:
+            return jsonify({'error': 'No encoder loaded'}), 400
+            
+        if hasattr(current_encoder, 'convert_to_openvino'):
+            print("Attempting to switch to OpenVINO backend...")
+            
+            # Pause inference?
+            with inference_lock:
+                 ov_encoder = current_encoder.convert_to_openvino()
+                 
+            if ov_encoder is not None:
+                # Replace current encoder
+                current_encoder = ov_encoder
+                encoder_name = f"{encoder_name} (OpenVINO)"
+                
+                # Trigger label re-encoding (OpenVINO wrapper handles it via original encoder, but good to refresh)
+                predictions_enabled = False
+                label_update_needed = True
+                
+                return jsonify({'success': True, 'model': encoder_name})
+            else:
+                return jsonify({'error': 'OpenVINO conversion failed'}), 500
+        else:
+             return jsonify({'error': 'Current encoder does not support OpenVINO'}), 400
+
+
 @app.route('/capture_sample', methods=['POST'])
 def capture_sample():
     global training_samples
