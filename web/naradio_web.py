@@ -22,6 +22,7 @@ if str(proj_root) not in sys.path:
 from naradio import load_encoder, preprocess_frame, cosine_similarity_matrix
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
+import glob
 
 # shared state across threads
 frame_lock = threading.Lock()
@@ -53,21 +54,122 @@ inference_lock = threading.Lock()
 training_samples = [] # List of (feature_vector, label_string)
 training_lock = threading.Lock()
 
+# Input source configuration
+input_config = {
+    'type': 'webcam', # webcam, video, image, folder
+    'value': 0,       # index or path
+    'update_needed': False
+}
+input_lock = threading.Lock()
+
+class ImageFolderCapture:
+    def __init__(self, path):
+        self.path = path
+        self.images = []
+        self.current_idx = 0
+        self.last_switch = 0
+        self.interval = 1.0 # 1 second per image
+        
+        if os.path.isdir(path):
+            # Folder mode
+            exts = ('*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp')
+            for ext in exts:
+                self.images.extend(glob.glob(os.path.join(path, ext)))
+                self.images.extend(glob.glob(os.path.join(path, ext.upper())))
+            self.images.sort()
+        elif os.path.isfile(path):
+            # Single image mode
+            self.images = [path]
+            
+        if not self.images:
+            raise ValueError(f"No images found in {path}")
+            
+        print(f"ImageFolderCapture loaded {len(self.images)} images from {path}")
+
+    def isOpened(self):
+        return bool(self.images)
+
+    def read(self):
+        if not self.images:
+            return False, None
+            
+        now = time.time()
+        if len(self.images) > 1 and now - self.last_switch > self.interval:
+            self.current_idx = (self.current_idx + 1) % len(self.images)
+            self.last_switch = now
+            
+        img_path = self.images[self.current_idx]
+        try:
+            # Use cv2 to read
+            frame = cv2.imread(img_path)
+            if frame is None:
+                print(f"Failed to read {img_path}")
+                # Try next one immediately
+                self.current_idx = (self.current_idx + 1) % len(self.images)
+                return True, None # Return True but None frame to signal skip? 
+                # Better: recurse or loop? Let's just return None and let loop handle
+            return True, frame
+        except Exception as e:
+            print(f"Error reading {img_path}: {e}")
+            return False, None
+
+    def release(self):
+        pass
+
+
 
 
 
 def capture_loop(device_index=0, camera_file=None):
-    global current_frame, camera_open, current_fps
-    cap = None
-    if camera_file is None:
-        cap = cv2.VideoCapture(device_index)
-    else:
-        cap = cv2.VideoCapture(camera_file)
+    global current_frame, camera_open, current_fps, input_config
     
-    if not cap.isOpened():
-        print(f"Camera device {device_index} not opened; cap.isOpened() == False. camera_file={camera_file}")
+    # Initialize config from args if not set
+    with input_lock:
+        if camera_file is not None:
+            input_config['type'] = 'video'
+            input_config['value'] = camera_file
+        else:
+            input_config['type'] = 'webcam'
+            input_config['value'] = device_index
+            
+    cap = None
+    
+    def open_source():
+        nonlocal cap
+        src_type = input_config['type']
+        val = input_config['value']
+        
+        if cap is not None:
+            cap.release()
+            
+        print(f"Opening source: {src_type} = {val}")
+        
+        try:
+            if src_type == 'webcam':
+                # Try to cast to int
+                try:
+                    idx = int(val)
+                except:
+                    idx = 0
+                cap = cv2.VideoCapture(idx)
+            elif src_type == 'video':
+                cap = cv2.VideoCapture(val)
+            elif src_type == 'image' or src_type == 'folder':
+                cap = ImageFolderCapture(val)
+            else:
+                print(f"Unknown source type: {src_type}")
+                cap = None
+        except Exception as e:
+            print(f"Failed to open source: {e}")
+            cap = None
+
+        if cap is None or not cap.isOpened():
+            print(f"Source not opened: {src_type} {val}")
+            return False
+        return True
+
+    if not open_source():
         camera_open = False
-        return
     else:
         camera_open = True
         
@@ -75,15 +177,47 @@ def capture_loop(device_index=0, camera_file=None):
     start_time = time.time()
     
     while True:
+        # Check for source update
+        update = False
+        with input_lock:
+            if input_config['update_needed']:
+                update = True
+                input_config['update_needed'] = False
+        
+        if update:
+            if open_source():
+                camera_open = True
+            else:
+                camera_open = False
+        
+        if cap is None or not camera_open:
+            time.sleep(0.5)
+            # Try to reopen periodically if it failed?
+            # For now just wait for user to change source
+            continue
+
         ret, frame = cap.read()
         if not ret:
             # If video file, rewind
-            if camera_file is not None:
+            if input_config['type'] == 'video':
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
-            time.sleep(0.1)
+            elif input_config['type'] in ('image', 'folder'):
+                # Should not happen with ImageFolderCapture unless empty
+                time.sleep(0.1)
+                continue
+                
+            # Webcam failure
+            print("Webcam read failure")
+            camera_open = False
+            time.sleep(1.0)
             continue
             
+        if frame is None:
+             # Skip empty frames (e.g. from ImageFolderCapture error)
+             time.sleep(0.01)
+             continue
+
         with frame_lock:
             current_frame = frame.copy()
             
@@ -796,6 +930,41 @@ def download_dataset():
             except Exception as e:
                 print(f"Download/Process failed: {e}")
                 return jsonify({'error': str(e)}), 500
+
+
+@app.route('/set_input_source', methods=['POST'])
+def set_input_source():
+    global input_config
+    data = request.json
+    src_type = data.get('type')
+    value = data.get('value')
+    
+    if not src_type or value is None:
+        return jsonify({'error': 'Type and value required'}), 400
+        
+    print(f"Request to set input source: {src_type} = {value}")
+    
+    # Validate
+    if src_type == 'webcam':
+        try:
+            int(value)
+        except:
+            return jsonify({'error': 'Webcam index must be an integer'}), 400
+    elif src_type == 'video':
+        # Check if file exists or is URL
+        if not (str(value).startswith('http') or os.path.exists(value)):
+             return jsonify({'error': 'Video file not found'}), 400
+    elif src_type == 'folder' or src_type == 'image':
+        if not os.path.exists(value):
+             return jsonify({'error': 'Path not found'}), 400
+             
+    with input_lock:
+        input_config['type'] = src_type
+        input_config['value'] = value
+        input_config['update_needed'] = True
+        
+    return jsonify({'success': True})
+
 
 def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
                  labels_str=None, encoder_device=None, force_gpu=False, min_cc=7.0):
