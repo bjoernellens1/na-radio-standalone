@@ -27,12 +27,13 @@ COPY requirements-intel.txt /app/requirements-intel.txt
 
 # Install dependencies based on ARCH_TYPE
 RUN python -m pip install --upgrade pip && \
-    python -m pip install -r /app/requirements-base.txt && \
     if [ "$ARCH_TYPE" = "intel" ]; then \
         echo "Installing Intel dependencies..." && \
-        python -m pip install -r /app/requirements-intel.txt; \
+        python -m pip install -r /app/requirements-intel.txt && \
+        python -m pip install -r /app/requirements-base.txt; \
     else \
-        echo "Skipping Intel dependencies for NVIDIA build"; \
+        echo "Installing Base dependencies for NVIDIA build..." && \
+        python -m pip install -r /app/requirements-base.txt; \
     fi
 
 # Emit build info
