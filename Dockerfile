@@ -1,5 +1,5 @@
 ARG TARGET_ARCH=intel
-ARG INTEL_BASE_IMAGE=python:3.10-slim
+ARG INTEL_BASE_IMAGE=python:3.10-slim-bullseye
 ARG NVIDIA_BASE_IMAGE=pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime
 
 # --- Intel Builder Stage ---
