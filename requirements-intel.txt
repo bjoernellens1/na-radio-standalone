@@ -1,0 +1,3 @@
+# Intel Optimizations
+intel-extension-for-pytorch
+openvino>=2024.0.0

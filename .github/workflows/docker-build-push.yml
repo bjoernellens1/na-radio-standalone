@@ -12,6 +12,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        target: [intel, nvidia]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,14 +32,17 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=branch
-            type=raw,value=intel-optimized,enable=${{ github.ref == 'refs/heads/feature/intel-optimization' }}
+            type=raw,value=latest,enable=${{ matrix.target == 'nvidia' && github.ref == 'refs/heads/main' }}
+            type=raw,value=intel-optimized,enable=${{ matrix.target == 'intel' && github.ref == 'refs/heads/main' }}
+            type=raw,value=cuda,enable=${{ matrix.target == 'nvidia' }}
+            type=ref,event=branch,suffix=-${{ matrix.target }}
 
       - name: Build and push
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
+          build-args: |
+            TARGET_ARCH=${{ matrix.target }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
