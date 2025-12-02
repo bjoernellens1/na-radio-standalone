@@ -1,5 +1,5 @@
 ARG TARGET_ARCH=intel
-ARG INTEL_BASE_IMAGE=python:3.10-slim-bullseye
+ARG INTEL_BASE_IMAGE=python:3.10-slim
 ARG NVIDIA_BASE_IMAGE=pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime
 
 # --- Intel Builder Stage ---
@@ -21,9 +21,8 @@ RUN python -m pip install --upgrade pip && \
     python -m pip install -r /app/requirements-base.txt
 
 # Fix for "cannot enable executable stack" error with IPEX
-RUN apt-get update && apt-get install -y execstack && \
-    find /usr/local/lib/python3.10/site-packages/intel_extension_for_pytorch -name "*.so" -exec execstack -c {} \; && \
-    rm -rf /var/lib/apt/lists/*
+COPY patch_elf.py /app/patch_elf.py
+RUN find /usr/local/lib/python3.10/site-packages/intel_extension_for_pytorch -name "*.so" -exec python /app/patch_elf.py {} \;
 
 # --- NVIDIA Builder Stage ---
 FROM ${NVIDIA_BASE_IMAGE} as build-nvidia
