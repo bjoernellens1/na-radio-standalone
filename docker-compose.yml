@@ -4,6 +4,7 @@ services:
     build:
       context: .
       args:
+        TARGET_ARCH: ${TARGET_ARCH:-intel}
         PYTORCH_BASE_IMAGE: ${PYTORCH_BASE_IMAGE:-pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime}
     image: ghcr.io/bjoernellens1/na-radio-standalone:intel-optimized
     ports:

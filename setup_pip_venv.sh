@@ -3,12 +3,13 @@ set -euo pipefail
 
 # Helper script to create a python venv and install pip requirements.
 # Usage:
-#   ./setup_pip_venv.sh [--cuda 11.8] [--cpu] [--venv .venv]
+#   ./setup_pip_venv.sh [--cuda 11.8] [--cpu] [--intel] [--venv .venv]
 # If --cpu is given, install CPU-only PyTorch. If --cuda is given, try to install matching torch wheel.
 
 VENV_DIR=${VENV_DIR:-.venv}
 CUDA_TOOLKIT=${CUDA_TOOLKIT:-11.8}
 FORCE_CPU=0
+INTEL_OPT=0
 TORCH_WHEEL_URL=""
 TORCH_VERSION=""
 
@@ -18,6 +19,8 @@ while [[ $# -gt 0 ]]; do
       CUDA_TOOLKIT="$2"; shift 2;;
     --cpu)
       FORCE_CPU=1; shift;;
+    --intel)
+      INTEL_OPT=1; shift;;
     --venv)
       VENV_DIR="$2"; shift 2;;
     --torch-wheel-url)
@@ -25,7 +28,7 @@ while [[ $# -gt 0 ]]; do
     --torch-version)
       TORCH_VERSION="$2"; shift 2;;
     *)
-      echo "Usage: $0 [--cuda 11.8] [--cpu] [--venv .venv]"; exit 1;;
+      echo "Usage: $0 [--cuda 11.8] [--cpu] [--intel] [--venv .venv]"; exit 1;;
   esac
 done
 
@@ -37,6 +40,10 @@ if [[ "$FORCE_CPU" -eq 1 ]]; then
   echo "Installing CPU-only PyTorch (pip)"
   pip install --upgrade pip
   pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
+elif [[ "$INTEL_OPT" -eq 1 ]]; then
+  echo "Installing Intel Optimized PyTorch (IPEX)"
+  pip install --upgrade pip
+  pip install -r requirements-intel.txt
 else
   echo "Attempting to install GPU PyTorch for CUDA ${CUDA_TOOLKIT}"
   # Install matching wheel for the specified CUDA. This isn't perfect for all GPU compute capabilities,
@@ -66,7 +73,7 @@ else
 fi
 
 echo "Installing other pip requirements"
-pip install -r requirements.txt
+pip install -r requirements-base.txt
 
 echo "Virtualenv ready. Activate with: source ${VENV_DIR}/bin/activate"
 

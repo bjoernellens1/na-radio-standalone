@@ -46,106 +46,54 @@ nothing else can run.
 
 ## Docker / Docker Compose
 
+The project supports both Intel (CPU/XPU) and NVIDIA (CUDA) architectures via a multi-stage Dockerfile.
+
+### Building the Image
+
+You can build the image for your specific target architecture using the `TARGET_ARCH` build argument.
+
+**Intel (CPU / XPU)**:
 ```bash
-# Build the image
-docker build -t naradio-demo:latest --build-arg PYTORCH_CUDA=cpu .
-
-# Simple run with GPU and webcam
-docker run --gpus all --rm \
-  -p 5000:5000 \
-  --device /dev/video0:/dev/video0 \
-  -v /dev/dri:/dev/dri \
-  naradio-demo:latest
+docker build --build-arg TARGET_ARCH=intel -t na-radio-intel .
 ```
 
-Compose is preferred for local development (adds caches and device mappings):
-
+**NVIDIA (CUDA)**:
 ```bash
-# CPU / generic run
-docker compose up --build
-
-# With webcam + GPU overrides
-docker compose -f docker-compose.yml \
-  -f docker-compose.override.yml \
-  -f docker-compose.gpu.yml up --build
+docker build --build-arg TARGET_ARCH=nvidia -t na-radio-nvidia .
 ```
 
-### Customizing the PyTorch base image
-The Docker image now inherits from `pytorch/pytorch`. Override
-`PYTORCH_BASE_IMAGE` (via `.env` or `--build-arg`) to match your GPU/driver.
-Example for Tesla P100 (needs CUDA 11.6 with `sm_60` support):
+### Running with Docker Compose
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.gpu.yml \
-  build --build-arg PYTORCH_BASE_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
-```
+We recommend using `docker compose` for local development. You can set the `TARGET_ARCH` in your `.env` file or pass it as an environment variable.
 
-You can also set the same value in `.env`:
+1. **Intel Mode (Default)**:
+   ```bash
+   TARGET_ARCH=intel docker compose up --build
+   ```
+   *Note: For Intel GPU support, ensure `/dev/dri` is mounted (default in `docker-compose.override.yml`).*
 
-```
-PYTORCH_BASE_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
-```
+2. **NVIDIA Mode**:
+   ```bash
+   TARGET_ARCH=nvidia docker compose up --build
+   ```
+   *Note: Ensure you have the NVIDIA Container Toolkit installed and `docker-compose.gpu.yml` configured if needed.*
 
-After the container is running, you can confirm CUDA visibility with:
+### Customizing Base Images
+You can override the base images if you need specific versions (e.g., for legacy hardware like Tesla P100):
 
 ```bash
-docker exec -it na-radio-standalone-naradio-1 python - <<'PY'
-import torch
-print("cuda?", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("device", torch.cuda.get_device_name(0), "capability", torch.cuda.get_device_capability(0))
-PY
+# Example: Build for NVIDIA P100 (needs CUDA 11.x)
+docker build \
+  --build-arg TARGET_ARCH=nvidia \
+  --build-arg NVIDIA_BASE_IMAGE=pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime \
+  -t na-radio-p100 .
 ```
-
-The compose files mount two volumes:
-
-| Volume        | Container path             | Purpose                                 |
-|---------------|----------------------------|-----------------------------------------|
-| `torch-cache` | `/root/.cache/torch`       | TorchHub repo + RADIO checkpoints       |
-| `hf-cache`    | `/root/.cache/huggingface` | Transformer tokenizers / secondary data |
-
-Keep these volumes around to avoid multi-GB downloads on every start.
-
-### Forcing GPU usage (legacy cards)
-The container reads a few optional environment variables before launching:
-
-- `ENCODER_DEVICE` (`cuda` / `cpu`) to explicitly pick the encoder device.
-- `FORCE_GPU` (`1`/`true`) to skip compute-capability safety checks.
-- `MIN_CC` (e.g., `6.0`) to set the minimum CUDA compute capability used by the safety check.
-- `GPU_DEVICE` (default `/dev/nvidia0`) to map a specific GPU device into the container if you use manual `--device` rules instead of `gpus: all`.
-
-Example for Tesla P100 (compute capability 6.0):
-
-```bash
-export ENCODER_DEVICE=cuda
-export FORCE_GPU=1
-export MIN_CC=6.0
-docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.gpu.yml up --build
-```
-
-## Older GPUs (Tesla P100, etc.)
-
-Recent PyTorch wheels drop support for `sm_60`. If you see warnings about
-unsupported compute capability, pick an older `pytorch/pytorch` base (e.g.,
-`pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime`) or run everything in CPU mode:
-
-```bash
-python naradio.py --mode webcam --device cpu --force-cpu
-```
-
-You can also pass `--min-cc 6.0` to `naradio.py` to relax the automatic CUDA
-compatibility check if you know your wheel/image is compatible.
 
 ## Troubleshooting
 
-- **Missing `libgthread-2.0.so.0` / other OpenCV deps:** install
-  `libglib2.0-0` (Debian/Ubuntu) or add `glib` via Nix.
-- **No webcam available:** Use `--video-file path.mp4` or inject the file via
-  the `VIDEO_FILE` environment variable for the web app.
-- **RADIO downloads every run:** ensure the cache volumes exist (Compose) or
-  mount `~/.cache/torch` inside the container manually.
-- **Label encoding failures:** install `transformers` (already listed in
-  `requirements.txt`) so the RADIO adaptor tokenizer can load.
+- **Intel IPEX Errors**: Ensure you are using the correct `TARGET_ARCH=intel` build.
+- **CUDA Errors**: Ensure you are using `TARGET_ARCH=nvidia` and have passed the GPU to the container (`--gpus all` or via compose).
+- **Webcam**: If no webcam is found, map the device correctly (e.g., `/dev/video0`) or use a video file via `VIDEO_FILE` env var.
 
 ## Contributing
 
