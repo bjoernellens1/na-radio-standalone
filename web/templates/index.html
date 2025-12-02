@@ -57,6 +57,7 @@
           <div class="card-footer text-muted d-flex justify-content-between">
             <span id="fps-display">FPS: --</span>
             <span id="inference-display">Inference: -- ms</span>
+            <span id="memory-display">Mem: -- MB</span>
           </div>
         </div>
       </div>
@@ -80,6 +81,21 @@
             <h5 class="mb-0">Controls</h5>
           </div>
           <div class="card-body">
+
+            <!-- Model Selection -->
+            <div class="mb-4">
+              <label for="modelSelect" class="form-label">Model</label>
+              <select class="form-select" id="modelSelect" onchange="changeModel()">
+                <option value="radio" selected>RADIO-v2.5</option>
+                <option value="siglip">SigLIP</option>
+                <option value="clip">OpenCLIP</option>
+                <option value="dinov2">DINOv2</option>
+                <option value="yolo">Yolo-World</option>
+                <option value="openyolo3d">OpenYOLO3D</option>
+                <option value="resnet">ResNet50 (Fallback)</option>
+
+              </select>
+            </div>
 
             <!-- Object Marking -->
             <div class="mb-4">
@@ -126,6 +142,45 @@
                   value="person, car, dog, cat, tree">
               </div>
               <button class="btn btn-primary w-100 mb-3" onclick="updateLabels()">Update Vocabulary</button>
+
+              <!-- Interactive Training Controls (DINOv2) -->
+              <div id="trainingControls" class="mb-3 d-none">
+                <hr>
+                <h6>Interactive Training</h6>
+                <div class="d-grid gap-2">
+                  <div class="input-group">
+                    <input type="text" class="form-control" id="captureLabel" placeholder="Label (e.g. cup)">
+                    <button class="btn btn-outline-secondary" type="button" onclick="captureSample()">Capture</button>
+                  </div>
+                  <div class="d-flex justify-content-between">
+                    <span id="sampleCount" class="text-muted small">Samples: 0</span>
+                    <span id="trainingStatus" class="text-muted small"></span>
+                  </div>
+                  <button class="btn btn-success" onclick="trainClassifier()">Train Classifier</button>
+                  <button class="btn btn-outline-danger btn-sm" onclick="resetClassifier()">Reset Training</button>
+                </div>
+
+                <hr>
+                <h6>Load Dataset</h6>
+                <div class="input-group mb-3">
+                  <input type="text" class="form-control" id="datasetPath" placeholder="/path/to/dataset">
+                  <button class="btn btn-outline-primary" type="button" onclick="loadDataset()">Load</button>
+                </div>
+
+                <hr>
+                <h6>Online Dataset</h6>
+                <div class="mb-3">
+                  <select class="form-select mb-2" id="onlineDsType" onchange="toggleOnlineUrl()">
+                    <option value="cifar10">CIFAR-10 (Python version)</option>
+                    <option value="url">Custom Zip/Tar URL</option>
+                  </select>
+                  <input type="text" class="form-control mb-2 d-none" id="onlineDsUrl"
+                    placeholder="https://example.com/dataset.zip">
+                  <button class="btn btn-outline-primary w-100" type="button" onclick="downloadDataset()">Download &
+                    Train</button>
+                </div>
+              </div>
+
 
               <hr>
 
@@ -202,6 +257,9 @@
           if (data.fps !== undefined) {
             document.getElementById('fps-display').textContent = `FPS: ${data.fps}`;
             document.getElementById('inference-display').textContent = `Inference: ${data.inference_time_ms} ms`;
+            if (data.memory_usage) {
+              document.getElementById('memory-display').textContent = `Mem: ${data.memory_usage.toFixed(0)} MB`;
+            }
           }
 
           // Heatmap Button
@@ -298,10 +356,187 @@
           })
           .catch(err => console.error('Error updating resolution:', err));
       }
+
+      function changeModel() {
+        const model = document.getElementById('modelSelect').value;
+        const btn = document.getElementById('modelSelect');
+        btn.disabled = true;
+
+        // Show/Hide training controls
+        const trainingControls = document.getElementById('trainingControls');
+        if (model === 'dinov2') {
+          trainingControls.classList.remove('d-none');
+        } else {
+          trainingControls.classList.add('d-none');
+        }
+
+        fetch('/change_model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: model })
+        })
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              console.log('Switched to model:', data.model);
+              // alert('Switched to ' + data.model);
+            } else {
+              alert('Failed to switch model: ' + data.error);
+              // Revert selection?
+            }
+          })
+          .catch(err => {
+            console.error('Error switching model:', err);
+            alert('Error switching model');
+          })
+          .finally(() => {
+            btn.disabled = false;
+          });
+      }
+
+      function captureSample() {
+        const label = document.getElementById('captureLabel').value;
+        if (!label) {
+          alert('Please enter a label first');
+          return;
+        }
+
+        fetch('/capture_sample', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: label })
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              document.getElementById('sampleCount').textContent = `Samples: ${data.samples_count}`;
+              // Flash success
+              const btn = document.querySelector('button[onclick="captureSample()"]');
+              const orig = btn.textContent;
+              btn.textContent = 'OK';
+              setTimeout(() => btn.textContent = orig, 1000);
+            } else {
+              alert('Capture failed: ' + data.error);
+            }
+          });
+      }
+
+      function trainClassifier() {
+        const status = document.getElementById('trainingStatus');
+        status.textContent = 'Training...';
+
+        fetch('/train_classifier', { method: 'POST' })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              status.textContent = 'Ready';
+              status.className = 'text-success small fw-bold';
+              alert('Training complete! Classes: ' + data.classes.join(', '));
+            } else {
+              status.textContent = 'Error';
+              status.className = 'text-danger small fw-bold';
+              alert('Training failed: ' + data.error);
+            }
+          });
+      }
+
+      function resetClassifier() {
+        if (!confirm('Clear all samples and trained model?')) return;
+
+        fetch('/reset_classifier', { method: 'POST' })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              document.getElementById('sampleCount').textContent = 'Samples: 0';
+              document.getElementById('trainingStatus').textContent = '';
+              alert('Reset complete');
+            }
+          });
+      }
+
+      function loadDataset() {
+        const path = document.getElementById('datasetPath').value;
+        if (!path) {
+          alert('Please enter a dataset path');
+          return;
+        }
+
+        const btn = document.querySelector('button[onclick="loadDataset()"]');
+        const orig = btn.textContent;
+        btn.textContent = 'Loading...';
+        btn.disabled = true;
+
+        fetch('/load_dataset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: path })
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              alert(`Loaded ${data.count} images from classes: ${data.classes.join(', ')}`);
+              // Update sample count (approximate, or fetch fresh status?)
+              // For now just alert.
+            } else {
+              alert('Load failed: ' + data.error);
+            }
+          })
+          .finally(() => {
+            btn.textContent = orig;
+            btn.disabled = false;
+          });
+      }
+
+      function toggleOnlineUrl() {
+        const type = document.getElementById('onlineDsType').value;
+        const urlInput = document.getElementById('onlineDsUrl');
+        if (type === 'url') {
+          urlInput.classList.remove('d-none');
+        } else {
+          urlInput.classList.add('d-none');
+        }
+      }
+
+      function downloadDataset() {
+        const type = document.getElementById('onlineDsType').value;
+        let url = null;
+        if (type === 'url') {
+          url = document.getElementById('onlineDsUrl').value;
+          if (!url) {
+            alert('Please enter a URL');
+            return;
+          }
+        }
+
+        const btn = document.querySelector('button[onclick="downloadDataset()"]');
+        const orig = btn.textContent;
+        btn.textContent = 'Downloading...';
+        btn.disabled = true;
+
+        fetch('/download_dataset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: type, url: url })
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              alert(`Downloaded & Processed ${data.count} images from classes: ${data.classes.join(', ')}`);
+            } else {
+              alert('Download failed: ' + data.error);
+            }
+          })
+          .finally(() => {
+            btn.textContent = orig;
+            btn.disabled = false;
+          });
+      }
+
+
+
       setInterval(updateStatus, 1000);
       updateStatus();
       setInterval(updatePredictions, 1000);
-      updatePredictions();
     </script>
 </body>
 

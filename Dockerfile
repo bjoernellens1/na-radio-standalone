@@ -3,8 +3,9 @@ FROM ${PYTORCH_BASE_IMAGE}
 
 # Install additional system packages required by the app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 git \
     && rm -rf /var/lib/apt/lists/*
+
 
 WORKDIR /app
 

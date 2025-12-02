@@ -62,6 +62,7 @@ else
         pip install torch torchvision -f https://download.pytorch.org/whl/torch_stable.html
         ;;
       esac
+    fi
 fi
 
 echo "Installing other pip requirements"

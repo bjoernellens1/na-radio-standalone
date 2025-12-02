@@ -6,6 +6,14 @@ import time
 import cv2
 import numpy as np
 import torch
+import gc
+import urllib.request
+import tarfile
+import zipfile
+import pickle
+import shutil
+import tempfile
+
 
 proj_root = pathlib.Path(__file__).resolve().parent.parent
 if str(proj_root) not in sys.path:
@@ -23,6 +31,8 @@ current_pred = []
 camera_open = False
 # encoder info
 encoder_name = None
+current_encoder = None
+model_lock = threading.Lock()
 # predictions enabled flag (set when label vectors are available)
 predictions_enabled = False
 # monitoring
@@ -39,6 +49,11 @@ heatmap_enabled = False
 # async state
 latest_heatmap = None
 heatmap_lock = threading.Lock()
+inference_lock = threading.Lock()
+training_samples = [] # List of (feature_vector, label_string)
+training_lock = threading.Lock()
+
+
 
 
 def capture_loop(device_index=0, camera_file=None):
@@ -82,8 +97,8 @@ def capture_loop(device_index=0, camera_file=None):
         time.sleep(0.001) # Yield slightly to avoid hogging CPU
 
 
-def inference_loop(encoder=None, label_vecs=None, labels=None, input_resolution=(512, 512)):
-    global current_pred, predictions_enabled, last_inference_time, current_labels, label_update_needed, latest_heatmap
+def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
+    global current_pred, predictions_enabled, last_inference_time, current_labels, label_update_needed, latest_heatmap, current_encoder
     
     # Use global current_labels if labels argument is not provided or to init
     global current_labels, label_update_needed
@@ -135,85 +150,125 @@ def inference_loop(encoder=None, label_vecs=None, labels=None, input_resolution=
             # label_vecs_local = None 
 
 
+        encoder = None
+        with model_lock:
+            encoder = current_encoder
+
         if encoder is not None and loop_labels:
-            now = time.time()
-            if label_vecs_local is None and now >= next_label_retry:
-                next_label_retry = now + retry_interval
-                try:
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    
-                    # Batched encoding to avoid OOM with large vocabularies
-                    batch_size = 8
-                    vecs_list = []
-                    for i in range(0, len(loop_labels), batch_size):
-                        batch = loop_labels[i:i+batch_size]
-                        if i % 40 == 0:
-                            print(f"Encoding batch {i}/{len(loop_labels)}")
+            with inference_lock:
+                now = time.time()
+                if label_vecs_local is None and now >= next_label_retry:
+                    next_label_retry = now + retry_interval
+                    try:
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
                         
-                        # Periodic cache clearing to avoid fragmentation
-                        if i > 0 and i % 100 == 0 and torch.cuda.is_available():
-                             torch.cuda.empty_cache()
-                             
-                        with torch.no_grad():
-                            v = encoder.encode_labels(batch)
-                            vecs_list.append(v.cpu()) # Move to CPU temporarily to save GPU memory
+                        # Batched encoding to avoid OOM with large vocabularies
+                        batch_size = 8
+                        vecs_list = []
+                        for i in range(0, len(loop_labels), batch_size):
+                            batch = loop_labels[i:i+batch_size]
+                            if i % 40 == 0:
+                                print(f"Encoding batch {i}/{len(loop_labels)}")
+                            
+                            # Periodic cache clearing to avoid fragmentation
+                            if i > 0 and i % 100 == 0 and torch.cuda.is_available():
+                                 torch.cuda.empty_cache()
+                                 
+                            with torch.no_grad():
+                                v = encoder.encode_labels(batch)
+                                vecs_list.append(v.cpu()) # Move to CPU temporarily to save GPU memory
+                            
+                            # Yield control to allow other threads/processes to run
+                            time.sleep(0.02)
                         
-                        # Yield control to allow other threads/processes to run
-                        time.sleep(0.02)
-                    
-                    # Concatenate and move back to GPU
-                    label_vecs_local = torch.cat(vecs_list, dim=0).to(encoder.device)
-                    
-                    predictions_enabled = True
-                    print(f'Precomputed {len(loop_labels)} label vectors successfully')
-                except Exception as e:
-                    print(f'Failed to precompute label vectors; retrying in {int(retry_interval)}s', repr(e))
-                    label_vecs_local = None
-            
-            if label_vecs_local is not None:
-                try:
-                    t0 = time.time()
-                    preds = _compute_predictions(frame_to_process, encoder, label_vecs_local, loop_labels, input_resolution)
-                    last_inference_time = (time.time() - t0) * 1000  # ms
-                    
-                    # Compute heatmap for top prediction if enabled
-                    new_heatmap = None
-                    if heatmap_enabled and preds and hasattr(encoder, 'compute_heatmap'):
-                        top_label = preds[0][0]
-                        try:
-                            # Find index of top label
-                            idx = loop_labels.index(top_label)
-                            top_vec = label_vecs_local[idx].unsqueeze(0)
-                            
-                            # Preprocess frame again (could optimize this)
-                            desired_res = getattr(encoder, 'input_resolution', input_resolution)
-                            t = preprocess_frame(frame_to_process, input_resolution=desired_res).to(encoder.device)
-                            
-                            hm = encoder.compute_heatmap(t, top_vec)
-                            hm_np = hm.cpu().numpy()
-                            
-                            # Overlay heatmap
-                            hm_uint8 = (hm_np * 255).astype(np.uint8)
-                            heatmap_img = cv2.applyColorMap(hm_uint8, cv2.COLORMAP_JET)
-                            
-                            # Resize heatmap to frame size if needed
-                            if heatmap_img.shape[:2] != frame_to_process.shape[:2]:
-                                heatmap_img = cv2.resize(heatmap_img, (frame_to_process.shape[1], frame_to_process.shape[0]))
-                            
-                            new_heatmap = heatmap_img
+                        # Concatenate and move back to GPU
+                        label_vecs_local = torch.cat(vecs_list, dim=0).to(encoder.device)
+                        
+                        predictions_enabled = True
+                        print(f'Precomputed {len(loop_labels)} label vectors successfully')
+                    except Exception as e:
+                        print(f'Failed to precompute label vectors; retrying in {int(retry_interval)}s', repr(e))
+                        label_vecs_local = None
+                
+                if label_vecs_local is not None or (hasattr(encoder, 'predict_custom') and hasattr(encoder, 'custom_head') and encoder.custom_head is not None) or hasattr(encoder, 'predict'):
+                    try:
+                        t0 = time.time()
+                        if hasattr(encoder, 'predict_custom') and hasattr(encoder, 'custom_head') and encoder.custom_head is not None:
+                             # Use custom head for prediction
+                             desired_res = getattr(encoder, 'input_resolution', input_resolution)
+                             t = preprocess_frame(frame_to_process, input_resolution=desired_res).to(encoder.device)
+                             with torch.no_grad():
+                                 vec = encoder.encode_image_to_vector(t)
+                             preds = encoder.predict_custom(vec)
+                        elif hasattr(encoder, 'predict'):
+                             # Use encoder's native predict method (e.g. Yolo)
+                             preds = encoder.predict(frame_to_process)
+                        else:
+                             preds = _compute_predictions(frame_to_process, encoder, label_vecs_local, loop_labels, input_resolution)
+
+
+                        last_inference_time = (time.time() - t0) * 1000  # ms
+                        
+                        # Compute heatmap for top prediction if enabled
+                        new_heatmap = None
+                        if heatmap_enabled and preds and hasattr(encoder, 'compute_heatmap'):
+                            top_label = preds[0][0]
+                            try:
+                                top_vec = None
+                                if top_label in loop_labels:
+                                    idx = loop_labels.index(top_label)
+                                    top_vec = label_vecs_local[idx].unsqueeze(0)
+                                elif hasattr(encoder, 'encode_labels'):
+                                    # Try to encode on the fly (e.g. for DINOv2 custom labels not in UI list)
+                                    try:
+                                        top_vec = encoder.encode_labels([top_label])
+                                    except:
+                                        pass
+
+                                if hasattr(encoder, 'compute_visualization'):
+                                    # Use encoder's custom visualization (e.g. Yolo bounding boxes)
+                                    # Pass original frame (numpy)
+                                    vis = encoder.compute_visualization(frame_to_process)
+                                    new_heatmap = (vis, 'replace')
+                                    
+                                elif top_vec is not None:
+                                    # Preprocess frame again (could optimize this)
+                                    desired_res = getattr(encoder, 'input_resolution', input_resolution)
+                                    t = preprocess_frame(frame_to_process, input_resolution=desired_res).to(encoder.device)
+                                    
+                                    hm = encoder.compute_heatmap(t, top_vec)
+                                    hm_np = hm.detach().cpu().numpy()
+                                    
+                                    # Overlay heatmap
+                                    hm_uint8 = (hm_np * 255).astype(np.uint8)
+                                    heatmap_img = cv2.applyColorMap(hm_uint8, cv2.COLORMAP_JET)
+                                    
+                                    # Resize heatmap to frame size if needed
+                                    if heatmap_img.shape[:2] != frame_to_process.shape[:2]:
+                                        heatmap_img = cv2.resize(heatmap_img, (frame_to_process.shape[1], frame_to_process.shape[0]))
+                                    
+                                    new_heatmap = (heatmap_img, 'blend')
+
+
+                                    
+                            except NotImplementedError:
+                                # Encoder doesn't support heatmap (e.g. Yolo)
+                                pass
+                            except Exception as e:
+                                # Only print if it's not a "not in list" error which we handled
+                                print("Heatmap error:", e)
+
+                        
+                        with heatmap_lock:
+                            latest_heatmap = new_heatmap
                                 
-                        except Exception as e:
-                            print("Heatmap error:", e)
-                    
-                    with heatmap_lock:
-                        latest_heatmap = new_heatmap
-                            
-                except Exception as e:
-                    import traceback
-                    print('Prediction error:', repr(e))
-                    traceback.print_exc()
-                    preds = []
+                    except Exception as e:
+                        import traceback
+                        print('Prediction error:', repr(e))
+                        traceback.print_exc()
+                        preds = []
+
 
         with frame_lock: # Reuse frame_lock for preds to keep it simple, or could use a new lock
             current_pred = preds
@@ -262,14 +317,30 @@ def gen_frames():
         
         with heatmap_lock:
             if latest_heatmap is not None:
-                hm = latest_heatmap.copy()
+                if isinstance(latest_heatmap, tuple):
+                    hm = (latest_heatmap[0].copy(), latest_heatmap[1])
+                else:
+                    hm = latest_heatmap.copy()
+
         
         # Blend if heatmap exists and is enabled
         if heatmap_enabled and hm is not None:
+            # Check if hm is tuple (img, mode)
+            mode = 'blend'
+            if isinstance(hm, tuple):
+                hm_img, mode = hm
+            else:
+                hm_img = hm
+
              # Resize hm if needed (should match img)
-            if hm.shape[:2] != img.shape[:2]:
-                hm = cv2.resize(hm, (img.shape[1], img.shape[0]))
-            img = cv2.addWeighted(img, 0.6, hm, 0.4, 0)
+            if hm_img.shape[:2] != img.shape[:2]:
+                hm_img = cv2.resize(hm_img, (img.shape[1], img.shape[0]))
+            
+            if mode == 'replace':
+                img = hm_img
+            else:
+                img = cv2.addWeighted(img, 0.6, hm_img, 0.4, 0)
+
 
         ret, buffer = cv2.imencode('.jpg', img)
         frame_bytes = buffer.tobytes()
@@ -302,8 +373,15 @@ def status():
         'predictions_enabled': predictions_enabled,
         'fps': round(current_fps, 1),
         'inference_time_ms': round(last_inference_time, 1),
-        'heatmap_enabled': heatmap_enabled
+        'heatmap_enabled': heatmap_enabled,
+        'memory_usage': get_memory_usage()
     })
+
+def get_memory_usage():
+    import psutil
+    import os
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024 # MB
 
 
 @app.route('/toggle_heatmap', methods=['POST'])
@@ -377,9 +455,352 @@ def update_resolution():
     return jsonify({'success': True, 'resolution': pending_resolution})
 
 
+@app.route('/change_model', methods=['POST'])
+def change_model():
+    global current_encoder, encoder_name, predictions_enabled, label_update_needed
+    data = request.json
+    new_model = data.get('model')
+    
+    if not new_model:
+        return jsonify({'error': 'Model name required'}), 400
+        
+    print(f"Switching to model: {new_model}")
+    
+    # Stop inference temporarily? The loop checks for encoder is None but we replace it atomically-ish
+    # But we should probably pause it.
+    
+    try:
+        old_encoder = None
+        with model_lock:
+            # Unload old model if possible (Python GC should handle it if we drop reference)
+            old_encoder = current_encoder
+            current_encoder = None
+        
+        # Wait for any ongoing inference to finish
+        with inference_lock:
+            pass
+
+        if old_encoder is not None:
+            print("Unloading old encoder...")
+            if hasattr(old_encoder, 'unload'):
+                old_encoder.unload()
+            del old_encoder
+        
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Load new model
+        # We need to know device, etc. We'll reuse global args or defaults
+        # For simplicity, use defaults or what was passed to start_server (we need to store them)
+        # We'll assume default device for now or store it.
+        # Let's use get_device()
+        from utils import get_device
+        device = get_device()
+        
+        enc, name = load_encoder(preferred=new_model, device=device)
+        
+        with model_lock:
+            current_encoder = enc
+            encoder_name = name
+        
+        # Trigger label re-encoding
+        predictions_enabled = False
+        label_update_needed = True
+            
+        return jsonify({'success': True, 'model': encoder_name})
+
+    except Exception as e:
+        print(f"Failed to switch model: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/capture_sample', methods=['POST'])
+def capture_sample():
+    global training_samples
+    data = request.json
+    label = data.get('label')
+    if not label:
+        return jsonify({'error': 'Label required'}), 400
+    
+    with frame_lock:
+        if current_frame is None:
+             return jsonify({'error': 'No frame available'}), 400
+        frame = current_frame.copy()
+        
+    with model_lock:
+        if current_encoder is None:
+             return jsonify({'error': 'No encoder loaded'}), 400
+        
+        # Encode frame
+        try:
+            # Preprocess
+            desired_res = getattr(current_encoder, 'input_resolution', (512, 512))
+            if hasattr(current_encoder, 'clip_preprocess') and getattr(current_encoder, 'clip_preprocess') is not None:
+                from PIL import Image
+                pil = Image.fromarray(frame[:, :, ::-1])
+                t = current_encoder.clip_preprocess(pil).unsqueeze(0).to(current_encoder.device)
+            else:
+                t = preprocess_frame(frame, input_resolution=desired_res).to(current_encoder.device)
+            
+            with torch.no_grad():
+                vec = current_encoder.encode_image_to_vector(t)
+                # Keep on CPU to save VRAM
+                vec = vec.cpu()
+                
+            with training_lock:
+                training_samples.append((vec, label))
+                count = len(training_samples)
+                
+            return jsonify({'success': True, 'samples_count': count})
+        except Exception as e:
+            print(f"Capture failed: {e}")
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/train_classifier', methods=['POST'])
+def train_classifier():
+    global training_samples
+    with model_lock:
+        if current_encoder is None:
+             return jsonify({'error': 'No encoder loaded'}), 400
+        if not hasattr(current_encoder, 'train_custom_head'):
+             return jsonify({'error': 'Current encoder does not support custom training'}), 400
+        
+        with training_lock:
+            if not training_samples:
+                 return jsonify({'error': 'No samples captured'}), 400
+            
+            features = torch.cat([s[0] for s in training_samples], dim=0).to(current_encoder.device)
+            labels = [s[1] for s in training_samples]
+            unique_labels = sorted(list(set(labels)))
+            
+            try:
+                current_encoder.train_custom_head(features, labels, unique_labels)
+                return jsonify({'success': True, 'classes': unique_labels})
+            except Exception as e:
+                print(f"Training failed: {e}")
+                return jsonify({'error': str(e)}), 500
+
+@app.route('/reset_classifier', methods=['POST'])
+def reset_classifier():
+    global training_samples
+    with training_lock:
+        training_samples = []
+    
+    with model_lock:
+        if current_encoder is not None and hasattr(current_encoder, 'reset_custom_head'):
+            current_encoder.reset_custom_head()
+            
+    return jsonify({'success': True})
+
+@app.route('/load_dataset', methods=['POST'])
+def load_dataset():
+    global training_samples
+    data = request.json
+    dataset_path = data.get('path')
+    if not dataset_path:
+        return jsonify({'error': 'Path required'}), 400
+    
+    if not os.path.isdir(dataset_path):
+        return jsonify({'error': 'Directory not found'}), 400
+
+    with model_lock:
+        if current_encoder is None:
+             return jsonify({'error': 'No encoder loaded'}), 400
+        
+        count = 0
+        classes_found = set()
+        
+        try:
+            # Walk through directory
+            for root, dirs, files in os.walk(dataset_path):
+                for file in files:
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp')):
+                        # Infer label from parent folder name
+                        label = os.path.basename(root)
+                        if label == os.path.basename(dataset_path):
+                            # Image in root folder, skip or use 'unknown'?
+                            continue
+                            
+                        img_path = os.path.join(root, file)
+                        
+                        try:
+                            # Load and preprocess
+                            from PIL import Image
+                            img = Image.open(img_path).convert('RGB')
+                            
+                            desired_res = getattr(current_encoder, 'input_resolution', (512, 512))
+                            if hasattr(current_encoder, 'clip_preprocess') and getattr(current_encoder, 'clip_preprocess') is not None:
+                                t = current_encoder.clip_preprocess(img).unsqueeze(0).to(current_encoder.device)
+                            else:
+                                # Convert to tensor manually if needed, but preprocess_frame expects numpy BGR usually?
+                                # Let's use preprocess_frame logic adapted for PIL or just convert PIL to numpy
+                                import numpy as np
+                                frame = np.array(img)[:, :, ::-1].copy() # RGB to BGR
+                                t = preprocess_frame(frame, input_resolution=desired_res).to(current_encoder.device)
+
+                            with torch.no_grad():
+                                vec = current_encoder.encode_image_to_vector(t)
+                                vec = vec.cpu()
+                            
+                            with training_lock:
+                                training_samples.append((vec, label))
+                                classes_found.add(label)
+                                count += 1
+                                
+                        except Exception as e:
+                            print(f"Failed to load {img_path}: {e}")
+                            
+            return jsonify({'success': True, 'count': count, 'classes': list(classes_found)})
+            
+        except Exception as e:
+            print(f"Dataset load failed: {e}")
+            return jsonify({'error': str(e)}), 500
+
+
+
+
+@app.route('/download_dataset', methods=['POST'])
+def download_dataset():
+    global training_samples
+    data = request.json
+    ds_type = data.get('type')
+    url = data.get('url')
+    
+    if ds_type == 'cifar10':
+        url = 'https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz'
+    elif ds_type == 'url':
+        if not url:
+             return jsonify({'error': 'URL required'}), 400
+    else:
+        return jsonify({'error': 'Invalid type'}), 400
+
+    with model_lock:
+        if current_encoder is None:
+             return jsonify({'error': 'No encoder loaded'}), 400
+        
+        # Create temp dir
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                print(f"Downloading {url}...")
+                file_name = url.split('/')[-1]
+                file_path = os.path.join(temp_dir, file_name)
+                
+                # Download
+                urllib.request.urlretrieve(url, file_path)
+                
+                count = 0
+                classes_found = set()
+                
+                # Extract and Process
+                if ds_type == 'cifar10':
+                    with tarfile.open(file_path, 'r:gz') as tar:
+                        tar.extractall(path=temp_dir)
+                    
+                    cifar_dir = os.path.join(temp_dir, 'cifar-10-batches-py')
+                    
+                    # Load meta
+                    with open(os.path.join(cifar_dir, 'batches.meta'), 'rb') as f:
+                        meta = pickle.load(f, encoding='bytes')
+                    label_names = [x.decode('utf-8') for x in meta[b'label_names']]
+                    
+                    # Load batches
+                    batches = [f'data_batch_{i}' for i in range(1, 6)] + ['test_batch']
+                    
+                    for b_name in batches:
+                        b_path = os.path.join(cifar_dir, b_name)
+                        with open(b_path, 'rb') as f:
+                            batch = pickle.load(f, encoding='bytes')
+                        
+                        images = batch[b'data']
+                        labels = batch[b'labels']
+                        
+                        # Reshape images: (N, 3072) -> (N, 3, 32, 32) -> (N, 32, 32, 3)
+                        images = images.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
+                        
+                        for i in range(len(images)):
+                            img = images[i] # RGB numpy array
+                            label = label_names[labels[i]]
+                            
+                            # Preprocess
+                            desired_res = getattr(current_encoder, 'input_resolution', (512, 512))
+                            # CIFAR images are small (32x32), upscaling might be needed or handled by preprocess
+                            # preprocess_frame handles resizing
+                            # img is RGB, preprocess_frame expects BGR if using cv2 logic?
+                            # preprocess_frame in naradio.py:
+                            # def preprocess_frame(frame, input_resolution=(512, 512)):
+                            #     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) ...
+                            # So it expects BGR.
+                            
+                            # Convert RGB to BGR for consistency with preprocess_frame
+                            frame_bgr = img[:, :, ::-1].copy()
+                            
+                            t = preprocess_frame(frame_bgr, input_resolution=desired_res).to(current_encoder.device)
+                            
+                            with torch.no_grad():
+                                vec = current_encoder.encode_image_to_vector(t)
+                                vec = vec.cpu()
+                            
+                            with training_lock:
+                                training_samples.append((vec, label))
+                                classes_found.add(label)
+                                count += 1
+                                
+                            if count % 100 == 0:
+                                print(f"Processed {count} images...")
+                                
+                else: # Generic Zip/Tar
+                    if file_name.endswith('.zip'):
+                        with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                            zip_ref.extractall(temp_dir)
+                    elif file_name.endswith(('.tar.gz', '.tgz')):
+                        with tarfile.open(file_path, 'r:gz') as tar:
+                            tar.extractall(path=temp_dir)
+                    
+                    # Walk and load like load_dataset
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            if file.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp')):
+                                # Infer label from parent folder name
+                                label = os.path.basename(root)
+                                # Skip if label is temp_dir name or extracted folder root if unstructured
+                                # Heuristic: if parent is temp_dir, maybe use 'unknown'?
+                                # Let's assume structured dataset
+                                
+                                img_path = os.path.join(root, file)
+                                try:
+                                    from PIL import Image
+                                    img = Image.open(img_path).convert('RGB')
+                                    
+                                    desired_res = getattr(current_encoder, 'input_resolution', (512, 512))
+                                    if hasattr(current_encoder, 'clip_preprocess') and getattr(current_encoder, 'clip_preprocess') is not None:
+                                        t = current_encoder.clip_preprocess(img).unsqueeze(0).to(current_encoder.device)
+                                    else:
+                                        import numpy as np
+                                        frame = np.array(img)[:, :, ::-1].copy() # RGB to BGR
+                                        t = preprocess_frame(frame, input_resolution=desired_res).to(current_encoder.device)
+
+                                    with torch.no_grad():
+                                        vec = current_encoder.encode_image_to_vector(t)
+                                        vec = vec.cpu()
+                                    
+                                    with training_lock:
+                                        training_samples.append((vec, label))
+                                        classes_found.add(label)
+                                        count += 1
+                                except Exception as e:
+                                    pass
+
+                return jsonify({'success': True, 'count': count, 'classes': list(classes_found)})
+
+            except Exception as e:
+                print(f"Download/Process failed: {e}")
+                return jsonify({'error': str(e)}), 500
+
 def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
                  labels_str=None, encoder_device=None, force_gpu=False, min_cc=7.0):
     # parse labels
+
     labels = [l.strip() for l in (labels_str or 'person,car,dog,cat,tree').split(',') if l.strip()]
     # load encoder
     device_opt = None if (encoder_device is None or encoder_device == '') else encoder_device
@@ -388,7 +809,8 @@ def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
                              input_resolution=(512, 512),
                              force_gpu=force_gpu,
                              min_cc=min_cc)
-    global encoder_name
+    global current_encoder, encoder_name
+    current_encoder = enc
     encoder_name = name
     # precompute label vectors once
     try:
@@ -404,7 +826,7 @@ def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
     capture_thr.start()
     
     # start inference thread
-    inference_thr = threading.Thread(target=inference_loop, args=(enc, label_vecs, labels, (512,512)), daemon=True)
+    inference_thr = threading.Thread(target=inference_loop, args=(label_vecs, labels, (512,512)), daemon=True)
     inference_thr.start()
     
     print(f'Starting web server with encoder: {name} on host {host}:{port}')
