@@ -9,7 +9,7 @@ from timm.layers import use_fused_attn
 from typing_extensions import override
 import cv2
 
-from utils import get_device, preprocess_frame
+from utils import get_device, preprocess_frame, optimize_model
 
 try:
     import openvino as ov
@@ -255,6 +255,7 @@ class FallbackResNetEncoder(LangSpatialGlobalImageEncoder):
     self.model = torch.nn.Sequential(*(list(self.model.children())[:-1]))
     self.model.eval()
     self.model = self.model.to(self.device)
+    self.model = optimize_model(self.model)
 
   @override
   def encode_image_to_vector(self, rgb_image: torch.FloatTensor) -> torch.FloatTensor:
@@ -300,6 +301,7 @@ class CLIPFallbackEncoder(LangSpatialGlobalImageEncoder):
       self.tokenizer = open_clip.get_tokenizer(model_name)
       self.clip_model.eval()
       self.clip_model = self.clip_model.to(self.device)
+      self.clip_model = optimize_model(self.clip_model)
       self._init_clip_resolution()
       self._init_clip_normalization()
     except Exception:
@@ -529,6 +531,8 @@ class NARadioEncoder(LangSpatialGlobalImageEncoder):
                                 adaptor_names=[lang_model])
     self.model.eval()
     self.model = self.model.to(self.device)
+    # Optimize with IPEX
+    self.model = optimize_model(self.model)
     self.model.make_preprocessor_external()
     # Steal adaptors from RADIO so it does not auto compute adaptor output.
     # We want to control when that happens.
@@ -779,6 +783,7 @@ class SigLIPEncoder(LangSpatialGlobalImageEncoder):
             self.tokenizer = open_clip.get_tokenizer('ViT-SO400M-14-SigLIP')
             self.model.eval()
             self.model = self.model.to(self.device)
+            self.model = optimize_model(self.model)
         except Exception as e:
             raise ImportError(f"Failed to load SigLIP: {e}")
         
@@ -908,6 +913,7 @@ class DINOv2Encoder(LangSpatialGlobalImageEncoder):
         self.model = torch.hub.load('facebookresearch/dinov2', model_name)
         self.model.eval()
         self.model = self.model.to(self.device)
+        self.model = optimize_model(self.model)
 
     @override
     def unload(self):
@@ -1220,99 +1226,4 @@ class YoloWorldEncoder(LangSpatialGlobalImageEncoder):
 
 
 
-class OpenYOLO3DEncoder(LangSpatialGlobalImageEncoder):
-    def __init__(self, device: str = None):
-        super().__init__(device)
-        self.network_2d = None
-        try:
-            import yaml
-            from third_party.OpenYOLO3D.utils.utils_2d import Network_2D
-            
-            config_path = "third_party/OpenYOLO3D/pretrained/config.yaml"
 
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            # Initialize Network_2D
-            # Note: Network_2D expects config dict
-            self.network_2d = Network_2D(config)
-            if hasattr(self.network_2d, 'runner') and hasattr(self.network_2d.runner, 'model'):
-                 self.network_2d.runner.model.to(self.device)
-            
-        except ImportError as e:
-            print(f"OpenYOLO3D dependencies missing: {e}")
-        except Exception as e:
-            print(f"OpenYOLO3D initialization failed: {e}")
-
-    @override
-    def encode_image_to_vector(self, rgb_image: torch.FloatTensor) -> torch.FloatTensor:
-        return torch.zeros(1, 512).to(self.device)
-
-    @override
-    def encode_labels(self, labels: List[str]) -> torch.FloatTensor:
-        # OpenYOLO3D handles labels via text prompts in predict
-        if self.network_2d:
-             # Update texts
-             self.network_2d.texts = [[t] for t in labels] + [[' ']]
-        return torch.zeros(len(labels), 512).to(self.device)
-
-    def predict(self, frame):
-        if self.network_2d:
-            import tempfile
-            import os
-            
-            # Save frame to temp file as Network_2D expects paths
-            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                cv2.imwrite(tmp.name, frame)
-                tmp_path = tmp.name
-            
-            try:
-                # inference_detector returns dict {frame_id: ...}
-                preds = self.network_2d.inference_detector([tmp_path])
-                
-                # Parse results
-                frame_id = os.path.splitext(os.path.basename(tmp_path))[0]
-                if frame_id in preds:
-                    p = preds[frame_id]
-                    res = []
-                    
-                    bboxes = p['bbox']
-                    labels_idx = p['labels']
-                    scores = p['scores']
-                    
-                    for i in range(len(scores)):
-                        lbl_idx = int(labels_idx[i])
-                        score = float(scores[i])
-                        # Get label name
-                        if lbl_idx < len(self.network_2d.texts):
-                            label_name = self.network_2d.texts[lbl_idx][0]
-                            res.append((label_name, score))
-                    
-                    self.last_results = p # Cache for visualization
-                    return res
-            except Exception as e:
-                print(f"OpenYOLO3D prediction failed: {e}")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-        return []
-
-    def compute_visualization(self, frame: np.ndarray) -> np.ndarray:
-        # Draw bounding boxes from last_results
-        if hasattr(self, 'last_results') and self.last_results:
-            p = self.last_results
-            bboxes = p['bbox'].cpu().numpy()
-            labels_idx = p['labels'].cpu().numpy()
-            scores = p['scores'].cpu().numpy()
-            
-            img = frame.copy()
-            for i in range(len(scores)):
-                x1, y1, x2, y2 = map(int, bboxes[i])
-                score = scores[i]
-                lbl_idx = int(labels_idx[i])
-                label_name = self.network_2d.texts[lbl_idx][0] if lbl_idx < len(self.network_2d.texts) else str(lbl_idx)
-                
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(img, f"{label_name} {score:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            return img
-        return frame

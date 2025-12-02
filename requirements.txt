@@ -4,9 +4,7 @@
 # They are deliberately removed to avoid accidental installation of mismatched GPU wheels
 numpy<2; python_version < "3.13"
 numpy>=2.0; python_version >= "3.13"
-# If you plan to use a full GUI (cv2.imshow) and camera capture, install opencv-python
-# On some distros / NixOS, you may prefer opencv-python-headless and a separate v4l package
-opencv-python
+opencv-python-headless
 matplotlib
 timm
 typing-extensions
@@ -17,19 +15,18 @@ flask
 gunicorn
 werkzeug
 transformers
-# Optional but recommended when running RADIO/CLIP models
-# open_clip_torch
-# sentence-transformers
 ultralytics
 segment-anything
 git+https://github.com/ultralytics/CLIP.git
-# OpenYOLO3D dependencies
-openmim
-mmengine
-mmcv>=2.0.0
-mmdet>=3.0.0
-mmyolo
 pyyaml
+
+# Intel Optimizations
+# Note: Specific versions might be needed depending on hardware/OS, 
+# but we'll start with standard pip packages.
+# For XPU support, one might need --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
+# But for now we assume CPU or standard IPEX.
+intel-extension-for-pytorch
+openvino>=2024.0.0
 
 
 

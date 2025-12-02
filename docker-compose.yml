@@ -5,7 +5,7 @@ services:
       context: .
       args:
         PYTORCH_BASE_IMAGE: ${PYTORCH_BASE_IMAGE:-pytorch/pytorch:2.2.2-cuda11.8-cudnn8-runtime}
-    image: ghcr.io/bjoernellens1/na-radio-standalone:latest
+    image: ghcr.io/bjoernellens1/na-radio-standalone:intel-optimized
     ports:
       - "5000:5000"
     environment:

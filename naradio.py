@@ -28,8 +28,7 @@ import cv2
 import matplotlib.pyplot as plt
 
 from utils import get_device, preprocess_frame, cosine_similarity_matrix, pca_2d_projection, is_cuda_compatible
-from encoders import NARadioEncoder, FallbackResNetEncoder, CLIPFallbackEncoder, SigLIPEncoder, DINOv2Encoder, YoloWorldEncoder, LangSpatialGlobalImageEncoder, OpenYOLO3DEncoder
-
+from encoders import NARadioEncoder, FallbackResNetEncoder, CLIPFallbackEncoder, SigLIPEncoder, DINOv2Encoder, YoloWorldEncoder, LangSpatialGlobalImageEncoder
 
 def load_encoder(preferred='radio', device: Optional[str] = None, input_resolution=(512,512), force_gpu: bool = False, min_cc: float = 7.0):
   """Try to load RADIO via the NARadioEncoder; if not possible, fallback to ResNet.
@@ -80,14 +79,6 @@ def load_encoder(preferred='radio', device: Optional[str] = None, input_resoluti
       except Exception as e:
           print(f"Failed to load Yolo-World: {e}")
           preferred = 'resnet'
-
-  if preferred == 'openyolo3d':
-      try:
-          enc = OpenYOLO3DEncoder(device=device)
-          return enc, "OpenYOLO3D"
-      except Exception as e:
-          print(f"Failed to load OpenYOLO3D: {e}")
-          preferred = 'yolo'
 
 
   if preferred == 'clip':

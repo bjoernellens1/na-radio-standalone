@@ -1,40 +1,60 @@
 import torch
-import numpy as np
 import cv2
+import numpy as np
+import math
 from typing import Optional
 
-def get_device(prefer_cuda: bool = True) -> str:
-  if prefer_cuda and torch.cuda.is_available():
-    return "cuda"
-  return "cpu"
+try:
+    import intel_extension_for_pytorch as ipex
+    IPEX_AVAILABLE = True
+except ImportError:
+    IPEX_AVAILABLE = False
 
-def get_gpu_info():
-  import torch
-  if not torch.cuda.is_available():
-    return None
-  dev = torch.cuda.current_device()
-  props = torch.cuda.get_device_properties(dev)
-  return {
-    'name': props.name,
-    'total_memory': props.total_memory,
-    'capability': f"{props.major}.{props.minor}",
-  }
+def get_device() -> str:
+    """
+    Get the best available device for inference.
+    Prioritizes Intel XPU if available, then CUDA, then CPU.
+    """
+    if hasattr(torch, 'xpu') and torch.xpu.is_available():
+        return "xpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+def optimize_model(model, dtype=None):
+    """
+    Optimize model using IPEX if available.
+    """
+    if IPEX_AVAILABLE:
+        try:
+            # IPEX optimization
+            # For now, we just run ipex.optimize.
+            # In a real scenario, we might want to cast to bfloat16 if supported.
+            if dtype is None:
+                dtype = torch.float32
+                # Check for AMX/AVX512 bf16 support?
+                # For simplicity, let's stick to float32 or whatever the model is,
+                # unless user asks for bf16.
+
+            model = ipex.optimize(model, dtype=dtype)
+            print("Model optimized with IPEX")
+        except Exception as e:
+            print(f"IPEX optimization failed: {e}")
+    return model
 
 def is_cuda_compatible(min_major=7):
-  """Return True if the current GPU(s) has a major compute capability >= min_major.
+    """Return True if the current GPU(s) has a major compute capability >= min_major.
 
-  The function gracefully handles no-CUDA available case.
-  """
-  if not torch.cuda.is_available():
-    return False
-  props = torch.cuda.get_device_properties(torch.cuda.current_device())
-  return props.major >= min_major
+    The function gracefully handles no-CUDA available case.
+    """
+    # Legacy check, keep for compatibility or remove?
+    # We'll keep it returning False if no CUDA
+    if not torch.cuda.is_available():
+        return False
+    props = torch.cuda.get_device_properties(torch.cuda.current_device())
+    return props.major >= min_major
 
 def preprocess_frame(frame: np.ndarray, input_resolution=(512, 512)) -> torch.FloatTensor:
-  """Converts a BGR numpy frame from OpenCV to a tensor ready for the encoder.
-
-  Returns a torch.FloatTensor shaped (1, 3, H, W).
-  """
   # Convert BGR to RGB and resize
   rgb = frame[:, :, ::-1]
   # resize and convert to float
