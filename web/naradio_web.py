@@ -20,6 +20,7 @@ if str(proj_root) not in sys.path:
     sys.path.insert(0, str(proj_root))
 
 from naradio import load_encoder, preprocess_frame, cosine_similarity_matrix
+from web.comparison import ComparisonEngine, calculate_metrics
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 import glob
@@ -61,6 +62,9 @@ input_config = {
     'update_needed': False
 }
 input_lock = threading.Lock()
+
+# Comparison Engine
+comparison_engine = ComparisonEngine()
 
 class ImageFolderCapture:
     def __init__(self, path):
@@ -821,6 +825,143 @@ def load_dataset():
         except Exception as e:
             print(f"Dataset load failed: {e}")
             return jsonify({'error': str(e)}), 500
+
+
+@app.route('/comparison/load_dataset', methods=['POST'])
+def comparison_load_dataset():
+    data = request.json
+    path = data.get('path')
+    if not path:
+        return jsonify({'error': 'Path required'}), 400
+        
+    try:
+        count, classes = comparison_engine.load_dataset(path)
+        return jsonify({'success': True, 'count': count, 'classes': classes})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/comparison/run', methods=['POST'])
+def comparison_run():
+    data = request.json
+    model_name = data.get('model')
+    class_name = data.get('class_name') # Optional: run for specific class
+    
+    if not comparison_engine.dataset:
+        return jsonify({'error': 'No dataset loaded'}), 400
+        
+    # We need to use the current encoder or load a new one?
+    # The user might want to compare multiple models.
+    # For now, let's assume we run on the *current* loaded model.
+    # Or we can switch models here?
+    # Let's use the current loaded model for simplicity and safety.
+    
+    with model_lock:
+        if current_encoder is None:
+             return jsonify({'error': 'No encoder loaded'}), 400
+        encoder = current_encoder
+        
+    results = []
+    
+    # Iterate over dataset
+    # This might be slow, so we should probably do it in a background thread
+    # and return a job ID. But for now, let's do a small batch or blocking (if dataset is small).
+    # Better: Generator?
+    
+    try:
+        total_metrics = {'mIoU': 0, 'Recall': 0, 'SCV': 0, 'SCVR': 0}
+        count = 0
+        
+        # Determine target class ID
+        target_class_id = None
+        if class_name:
+            # Find ID for name
+            for cid, cname in comparison_engine.dataset.classes.items():
+                if cname == class_name:
+                    target_class_id = cid
+                    break
+            if target_class_id is None:
+                 return jsonify({'error': f'Class {class_name} not found in dataset'}), 400
+        
+        for i in range(len(comparison_engine.dataset)):
+            img, mask, basename = comparison_engine.dataset[i]
+            
+            # If target_class_id is specified, check if it exists in mask
+            if target_class_id is not None and target_class_id not in mask:
+                continue
+                
+            # Run inference
+            # We need to generate a heatmap for the class
+            # Encode label
+            label_text = class_name if class_name else "object" # Fallback?
+            if not class_name:
+                 # If no class specified, what do we query?
+                 # We probably need to iterate over all classes present in the mask?
+                 # For simplicity, let's require class_name for now.
+                 continue
+                 
+            # Encode label
+            with torch.no_grad():
+                if hasattr(encoder, 'encode_labels'):
+                    label_vec = encoder.encode_labels([label_text])
+                else:
+                    continue # Encoder doesn't support text query
+                
+                # Compute heatmap
+                desired_res = getattr(encoder, 'input_resolution', (512, 512))
+                t = preprocess_frame(img, input_resolution=desired_res).to(encoder.device)
+                
+                if hasattr(encoder, 'compute_heatmap'):
+                    hm = encoder.compute_heatmap(t, label_vec)
+                    hm_np = hm.detach().cpu().numpy()
+                    
+                    # Threshold heatmap to get binary mask
+                    # Normalize first? compute_heatmap does normalize 0..1
+                    pred_mask = (hm_np > 0.5).astype(np.uint8)
+                    
+                    # Get GT mask for this class
+                    gt_binary = (mask == target_class_id).astype(np.uint8)
+                    
+                    metrics = calculate_metrics(pred_mask, gt_binary)
+                    
+                    for k in total_metrics:
+                        total_metrics[k] += metrics[k]
+                    count += 1
+                    
+        if count > 0:
+            for k in total_metrics:
+                total_metrics[k] /= count
+                
+        return jsonify({'success': True, 'metrics': total_metrics, 'samples_processed': count})
+
+    except Exception as e:
+        print(f"Comparison failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/comparison/download_dataset', methods=['POST'])
+def comparison_download_dataset():
+    data = request.json
+    url = data.get('url')
+    if not url:
+        return jsonify({'error': 'URL required'}), 400
+        
+    # Define a safe place to save
+    # In Docker, /app/test_images/downloaded_datasets is good
+    base_dir = os.path.join(proj_root, 'test_images', 'downloaded_datasets')
+    
+    # Create a unique folder name based on URL or timestamp
+    import hashlib
+    name_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+    save_path = os.path.join(base_dir, name_hash)
+    
+    try:
+        final_path = comparison_engine.download_and_extract_dataset(url, save_path)
+        return jsonify({'success': True, 'path': final_path})
+    except Exception as e:
+        print(f"Download failed: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 

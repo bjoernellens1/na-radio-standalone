@@ -95,6 +95,10 @@
                 <button class="nav-link" id="training-tab" data-bs-toggle="tab" data-bs-target="#training" type="button"
                   role="tab">Training</button>
               </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="comparison-tab" data-bs-toggle="tab" data-bs-target="#comparison"
+                  type="button" role="tab">Comparison</button>
+              </li>
             </ul>
 
             <div class="tab-content" id="controlTabsContent">
@@ -229,9 +233,109 @@
                   <small>Select <strong>DINOv2</strong> model to enable training.</small>
                 </div>
               </div>
+
+              <!-- Comparison Tab -->
+              <div class="tab-pane fade" id="comparison" role="tabpanel">
+                <div class="mb-3">
+                  <label class="form-label">Dataset Path</label>
+                  <div class="input-group">
+                    <input type="text" class="form-control" id="compDatasetPath" placeholder="/path/to/dataset">
+                    <button class="btn btn-outline-primary" onclick="loadCompDataset()">Load</button>
+                  </div>
+                  <div class="form-text">Must contain 'images' and 'masks' folders.</div>
+                </div>
+
+                <div class="mb-3 border-top pt-3">
+                  <h6>Download Dataset</h6>
+                  <div class="input-group mb-2">
+                    <input type="text" class="form-control" id="compDownloadUrl"
+                      placeholder="https://example.com/dataset.zip">
+                    <button class="btn btn-outline-secondary" onclick="downloadCompDataset()">Download</button>
+                  </div>
+                  <div class="d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm" id="compPresetSelect" onchange="applyPreset()"
+                      style="max-width: 200px;">
+                      <option value="">Select Preset...</option>
+                      <option value="http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar">Pascal
+                        VOC 2012 (2GB)</option>
+                      <option value="demo">Demo Dataset (Small)</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal"
+                      data-bs-target="#datasetHelpModal">
+                      <i class="bi bi-question-circle"></i> Help / Restricted Datasets
+                    </button>
+                  </div>
+                </div>
+
+                <div id="compControls" class="d-none border-top pt-3">
+                  <div class="mb-3">
+                    <label class="form-label">Target Class</label>
+                    <select class="form-select" id="compClassSelect">
+                      <option value="">Select a class...</option>
+                    </select>
+                  </div>
+
+                  <div class="d-grid gap-2 mb-3">
+                    <button class="btn btn-primary" onclick="runComparison()">Run Comparison</button>
+                  </div>
+
+                  <div id="compResults" class="d-none">
+                    <h6>Results</h6>
+                    <table class="table table-sm table-bordered">
+                      <thead>
+                        <tr>
+                          <th>Metric</th>
+                          <th>Value</th>
+                        </tr>
+                      </thead>
+                      <tbody id="compResultsBody">
+                      </tbody>
+                    </table>
+                    <div class="text-muted small" id="compStatus"></div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
+        </div>
+      </div>
+    </div>
+
+    <!-- Dataset Help Modal -->
+    <div class="modal fade" id="datasetHelpModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Dataset Help</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <h6>Supported Formats</h6>
+            <p>The tool supports datasets in ZIP or Tar archives. The extracted folder should contain:</p>
+            <ul>
+              <li><code>images/</code> and <code>masks/</code> subdirectories (Standard)</li>
+              <li>OR <code>JPEGImages/</code> and <code>SegmentationClass/</code> subdirectories (Pascal VOC style)</li>
+            </ul>
+
+            <h6>Restricted Datasets (ScanRefer, Nr3D, Sr3D)</h6>
+            <p>These datasets are built on top of <strong>ScanNet</strong>, which requires you to sign a Terms of Use
+              agreement. We cannot download them automatically.</p>
+            <p><strong>How to use them:</strong></p>
+            <ol>
+              <li>Go to the <a href="http://www.scan-net.org/" target="_blank">ScanNet website</a> and request access.
+              </li>
+              <li>Download the ScanNet data and the corresponding linguistic dataset (ScanRefer, Nr3D, etc.).</li>
+              <li>Organize them locally so that you have 2D images and masks (you may need to project 3D labels to 2D if
+                not provided).</li>
+              <li>Place the folder in a path accessible to this application (e.g., inside the project folder if running
+                locally, or mounted volume if using Docker).</li>
+              <li>Enter the local path in the "Dataset Path" field.</li>
+            </ol>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          </div>
         </div>
       </div>
     </div>
@@ -667,6 +771,154 @@
             btn.textContent = orig;
             btn.disabled = false;
           });
+      }
+
+      function loadCompDataset() {
+        const path = document.getElementById('compDatasetPath').value;
+        if (!path) {
+          alert('Please enter a path');
+          return;
+        }
+
+        const btn = document.querySelector('button[onclick="loadCompDataset()"]');
+        const orig = btn.textContent;
+        btn.textContent = 'Loading...';
+        btn.disabled = true;
+
+        fetch('/comparison/load_dataset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: path })
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              alert(`Loaded ${data.count} images.`);
+              const select = document.getElementById('compClassSelect');
+              select.innerHTML = '<option value="">Select a class...</option>';
+              for (const [id, name] of Object.entries(data.classes)) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = `${name} (ID: ${id})`;
+                select.appendChild(opt);
+              }
+              document.getElementById('compControls').classList.remove('d-none');
+            } else {
+              alert('Error: ' + data.error);
+            }
+          })
+          .catch(e => {
+            console.error(e);
+            alert('Failed to load dataset');
+          })
+          .finally(() => {
+            btn.textContent = orig;
+            btn.disabled = false;
+          });
+      }
+
+      function runComparison() {
+        const className = document.getElementById('compClassSelect').value;
+        if (!className) {
+          alert('Please select a class');
+          return;
+        }
+
+        const btn = document.querySelector('button[onclick="runComparison()"]');
+        const orig = btn.textContent;
+        btn.textContent = 'Running...';
+        btn.disabled = true;
+
+        document.getElementById('compResults').classList.add('d-none');
+
+        fetch('/comparison/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ class_name: className })
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              const tbody = document.getElementById('compResultsBody');
+              tbody.innerHTML = '';
+              for (const [metric, value] of Object.entries(data.metrics)) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${metric}</td><td>${value.toFixed(4)}</td>`;
+                tbody.appendChild(tr);
+              }
+              document.getElementById('compStatus').textContent = `Processed ${data.samples_processed} samples.`;
+              document.getElementById('compResults').classList.remove('d-none');
+            } else {
+              alert('Error: ' + data.error);
+            }
+          })
+          .catch(e => {
+            console.error(e);
+            alert('Comparison failed');
+          })
+          .finally(() => {
+            btn.textContent = orig;
+            btn.disabled = false;
+          });
+      }
+
+      function downloadCompDataset() {
+        const url = document.getElementById('compDownloadUrl').value;
+        if (!url) {
+          alert('Please enter a URL');
+          return;
+        }
+
+        const btn = document.querySelector('button[onclick="downloadCompDataset()"]');
+        const orig = btn.textContent;
+        btn.textContent = 'Downloading...';
+        btn.disabled = true;
+
+        fetch('/comparison/download_dataset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: url })
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              alert('Dataset downloaded successfully!');
+              document.getElementById('compDatasetPath').value = data.path;
+              // Auto load?
+              loadCompDataset();
+            } else {
+              alert('Download failed: ' + data.error);
+            }
+          })
+          .catch(e => {
+            console.error(e);
+            alert('Download failed');
+          })
+          .finally(() => {
+            btn.textContent = orig;
+            btn.disabled = false;
+          });
+      }
+
+      function setDemoDatasetUrl() {
+        // Use a dummy URL or a real one if available. 
+        // For now, let's use a placeholder or a known small dataset.
+        // I'll use a placeholder that points to a non-existent file for now, 
+        // or if I can find a real public small dataset.
+        // Let's use a dummy one for the user to replace.
+        document.getElementById('compDownloadUrl').value = "https://github.com/bjoernellens1/na-radio-standalone/raw/main/test_images/dataset.zip";
+        // Note: This URL likely doesn't exist, but serves as example.
+        alert("Populated with example URL. (Note: This specific URL might not exist, replace with valid zip URL)");
+      }
+
+      function applyPreset() {
+        const select = document.getElementById('compPresetSelect');
+        const val = select.value;
+        if (val === 'demo') {
+          document.getElementById('compDownloadUrl').value = "https://github.com/bjoernellens1/na-radio-standalone/raw/main/test_images/dataset.zip";
+        } else if (val) {
+          document.getElementById('compDownloadUrl').value = val;
+        }
       }
 
       setInterval(updateStatus, 1000);

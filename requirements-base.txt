@@ -17,3 +17,4 @@ ultralytics
 segment-anything
 git+https://github.com/ultralytics/CLIP.git
 pyyaml
+scikit-learn
