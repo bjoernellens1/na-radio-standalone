@@ -48,6 +48,12 @@ nothing else can run.
 
 The project supports both Intel (CPU/XPU) and NVIDIA (CUDA) architectures via a multi-stage Dockerfile.
 
+### Prebuilt Images
+
+Prebuilt images are available on GHCR:
+- **Intel/CPU**: `ghcr.io/bjoernellens1/na-radio-standalone:intel-optimized`
+- **NVIDIA/CUDA**: `ghcr.io/bjoernellens1/na-radio-standalone:cuda`
+
 ### Building the Image
 
 You can build the image for your specific target architecture using the `TARGET_ARCH` build argument.
@@ -68,15 +74,15 @@ We recommend using `docker compose` for local development. You can set the `TARG
 
 1. **Intel Mode (Default)**:
    ```bash
-   TARGET_ARCH=intel docker compose up --build
+   TARGET_ARCH=intel docker compose up
    ```
    *Note: For Intel GPU support, ensure `/dev/dri` is mounted (default in `docker-compose.override.yml`).*
 
 2. **NVIDIA Mode**:
    ```bash
-   TARGET_ARCH=nvidia docker compose up --build
+   TARGET_ARCH=nvidia docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.gpu.yml up
    ```
-   *Note: Ensure you have the NVIDIA Container Toolkit installed and `docker-compose.gpu.yml` configured if needed.*
+   *Note: Ensure you have the NVIDIA Container Toolkit installed.*
 
 ### Customizing Base Images
 You can override the base images if you need specific versions (e.g., for legacy hardware like Tesla P100):

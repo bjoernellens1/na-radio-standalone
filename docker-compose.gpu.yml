@@ -2,6 +2,8 @@ services:
   naradio:
     image: ghcr.io/bjoernellens1/na-radio-standalone:cuda
     privileged: true
+    devices:
+      - nvidia.com/gpu=all
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
