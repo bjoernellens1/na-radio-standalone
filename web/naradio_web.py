@@ -890,13 +890,8 @@ def comparison_run():
                 continue
                 
             # Run inference
-            # We need to generate a heatmap for the class
-            # Encode label
             label_text = class_name if class_name else "object" # Fallback?
             if not class_name:
-                 # If no class specified, what do we query?
-                 # We probably need to iterate over all classes present in the mask?
-                 # For simplicity, let's require class_name for now.
                  continue
                  
             # Encode label
@@ -915,21 +910,24 @@ def comparison_run():
                     hm_np = hm.detach().cpu().numpy()
                     
                     # Threshold heatmap to get binary mask
-                    # Normalize first? compute_heatmap does normalize 0..1
                     pred_mask = (hm_np > 0.5).astype(np.uint8)
                     
-                    # Get GT mask for this class
-                    gt_binary = (mask == target_class_id).astype(np.uint8)
-                    
-                    metrics = calculate_metrics(pred_mask, gt_binary)
-                    
-                    for k in total_metrics:
-                        total_metrics[k] += metrics[k]
+                    if mask is not None:
+                        # Get GT mask for this class
+                        gt_binary = (mask == target_class_id).astype(np.uint8)
+                        
+                        metrics = calculate_metrics(pred_mask, gt_binary)
+                        
+                        for k in total_metrics:
+                            total_metrics[k] += metrics[k]
                     count += 1
                     
-        if count > 0:
+        if count > 0 and mask is not None:
             for k in total_metrics:
                 total_metrics[k] /= count
+        elif mask is None:
+             # If no masks, return empty metrics or indicate inference only
+             total_metrics = {k: -1 for k in total_metrics}
                 
         return jsonify({'success': True, 'metrics': total_metrics, 'samples_processed': count})
 

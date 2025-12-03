@@ -258,6 +258,8 @@
                       <option value="">Select Preset...</option>
                       <option value="http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar">Pascal
                         VOC 2012 (2GB)</option>
+                      <option value="https://cvg-data.inf.ethz.ch/nice-slam/data/Replica.zip">Nice-SLAM Replica (2.5GB)
+                        - Inference Only</option>
                       <option value="demo">Demo Dataset (Small)</option>
                     </select>
                     <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal"
@@ -316,20 +318,22 @@
             <ul>
               <li><code>images/</code> and <code>masks/</code> subdirectories (Standard)</li>
               <li>OR <code>JPEGImages/</code> and <code>SegmentationClass/</code> subdirectories (Pascal VOC style)</li>
+              <li>OR <code>rgb/</code> and <code>semantic_class/</code> subdirectories (Semantic-NeRF style)</li>
+              <li>OR <code>results/</code> with <code>frame*.jpg</code> (Nice-SLAM style - Images Only)</li>
             </ul>
 
-            <h6>Restricted Datasets (ScanRefer, Nr3D, Sr3D)</h6>
-            <p>These datasets are built on top of <strong>ScanNet</strong>, which requires you to sign a Terms of Use
-              agreement. We cannot download them automatically.</p>
+            <h6>Restricted / Other Datasets</h6>
+            <p><strong>ScanRefer, Nr3D, Sr3D</strong>: Require ScanNet access. Download manually.</p>
+            <p><strong>Semantic-NeRF Replica</strong>: Contains semantic masks. Available via <a
+                href="https://github.com/Harry-Zhi/semantic_nerf#datasets" target="_blank">Dropbox link in their
+                repo</a>.</p>
+            <p><strong>TartanAirV2</strong>: Download using <a href="https://github.com/castacks/tartanair_tools"
+                target="_blank">tartanairpy</a>.</p>
+
             <p><strong>How to use them:</strong></p>
             <ol>
-              <li>Go to the <a href="http://www.scan-net.org/" target="_blank">ScanNet website</a> and request access.
-              </li>
-              <li>Download the ScanNet data and the corresponding linguistic dataset (ScanRefer, Nr3D, etc.).</li>
-              <li>Organize them locally so that you have 2D images and masks (you may need to project 3D labels to 2D if
-                not provided).</li>
-              <li>Place the folder in a path accessible to this application (e.g., inside the project folder if running
-                locally, or mounted volume if using Docker).</li>
+              <li>Download and extract the dataset locally.</li>
+              <li>Place the folder in a path accessible to this application.</li>
               <li>Enter the local path in the "Dataset Path" field.</li>
             </ol>
           </div>

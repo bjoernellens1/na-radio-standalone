@@ -37,18 +37,62 @@ class DatasetLoader:
                 self.masks_path = potential_masks[0]
                 print(f"Detected VOC structure: {self.images_path}, {self.masks_path}")
             else:
-                # Fallback to checking if root itself contains images/masks (flat structure?)
-                # Or just error out
-                raise ValueError(f"Dataset must contain 'images'/'masks' or 'JPEGImages'/'SegmentationClass' in {root_path}")
+                # Try Semantic-NeRF Replica structure
+                # Look for 'rgb' and 'semantic_class' folders
+                potential_images = []
+                potential_masks = []
+                for root, dirs, files in os.walk(root_path):
+                    if 'rgb' in dirs and 'semantic_class' in dirs:
+                        potential_images.append(os.path.join(root, 'rgb'))
+                        potential_masks.append(os.path.join(root, 'semantic_class'))
+                
+                if potential_images and potential_masks:
+                    self.images_path = potential_images[0]
+                    self.masks_path = potential_masks[0]
+                    print(f"Detected Semantic-NeRF Replica structure: {self.images_path}, {self.masks_path}")
+                else:
+                    # Try Nice-SLAM Replica structure (No masks usually)
+                    # Look for 'results' folder with 'frame*.jpg'
+                    potential_images = []
+                    for root, dirs, files in os.walk(root_path):
+                        if 'results' in dirs:
+                            # Check if it contains frames
+                            if any(f.startswith('frame') and f.endswith('.jpg') for f in os.listdir(os.path.join(root, 'results'))):
+                                potential_images.append(os.path.join(root, 'results'))
+                    
+                    if potential_images:
+                        self.images_path = potential_images[0]
+                        self.masks_path = None # No masks
+                        print(f"Detected Nice-SLAM Replica structure (Images only): {self.images_path}")
+                    else:
+                         raise ValueError(f"Dataset structure not recognized in {root_path}")
             
         self.image_files = sorted(glob.glob(os.path.join(self.images_path, '*')))
-        self.mask_files = sorted(glob.glob(os.path.join(self.masks_path, '*')))
-        
-        # Filter to keep only matching pairs
-        self.image_files = [f for f in self.image_files if any(os.path.splitext(os.path.basename(f))[0] == os.path.splitext(os.path.basename(m))[0] for m in self.mask_files)]
-        # Re-sort to ensure alignment (optimization possible but this is safe)
-        self.image_files.sort()
-        self.mask_files.sort() # Assumption: filenames match exactly except extension
+        if self.masks_path:
+            self.mask_files = sorted(glob.glob(os.path.join(self.masks_path, '*')))
+            # Filter to keep only matching pairs
+            # Note: Semantic-NeRF uses rgb_0.png and semantic_class_0.png. 
+            # Basenames: rgb_0 vs semantic_class_0. They don't match directly.
+            # We need a smarter matching strategy.
+            
+            # Helper to extract ID
+            def get_id(fname):
+                # Extract number from filename
+                import re
+                match = re.search(r'(\d+)', fname)
+                return int(match.group(1)) if match else -1
+                
+            # Create dict mapping ID to filename
+            img_map = {get_id(os.path.basename(f)): f for f in self.image_files}
+            mask_map = {get_id(os.path.basename(f)): f for f in self.mask_files}
+            
+            # Find common IDs
+            common_ids = sorted(list(set(img_map.keys()) & set(mask_map.keys())))
+            
+            self.image_files = [img_map[i] for i in common_ids]
+            self.mask_files = [mask_map[i] for i in common_ids]
+        else:
+            self.mask_files = []
         
         # Load class mapping if exists
         self.classes = {}
@@ -68,19 +112,17 @@ class DatasetLoader:
         
     def __getitem__(self, idx):
         img_path = self.image_files[idx]
-        # Find corresponding mask (assuming same basename)
-        basename = os.path.splitext(os.path.basename(img_path))[0]
-        mask_path = next((m for m in self.mask_files if os.path.splitext(os.path.basename(m))[0] == basename), None)
         
-        if mask_path is None:
-            raise ValueError(f"No mask found for {img_path}")
-            
         img = cv2.imread(img_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        
-        return img, mask, basename
+        if self.mask_files:
+            mask_path = self.mask_files[idx]
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        else:
+            mask = None
+            
+        return img, mask, os.path.basename(img_path)
 
 def calculate_metrics(pred_mask, gt_mask):
     """
