@@ -938,6 +938,15 @@ def comparison_run():
         return jsonify({'error': str(e)}), 500
 
 
+# Global download status
+download_status = {
+    'active': False,
+    'progress': 0,
+    'logs': [],
+    'error': None,
+    'path': None
+}
+
 @app.route('/comparison/download_dataset', methods=['POST'])
 def comparison_download_dataset():
     data = request.json
@@ -945,6 +954,16 @@ def comparison_download_dataset():
     if not url:
         return jsonify({'error': 'URL required'}), 400
         
+    if download_status['active']:
+        return jsonify({'error': 'A download is already in progress'}), 400
+        
+    # Reset status
+    download_status['active'] = True
+    download_status['progress'] = 0
+    download_status['logs'] = []
+    download_status['error'] = None
+    download_status['path'] = None
+    
     # Define a safe place to save
     # In Docker, /app/test_images/downloaded_datasets is good
     base_dir = os.path.join(proj_root, 'test_images', 'downloaded_datasets')
@@ -954,12 +973,32 @@ def comparison_download_dataset():
     name_hash = hashlib.md5(url.encode()).hexdigest()[:8]
     save_path = os.path.join(base_dir, name_hash)
     
-    try:
-        final_path = comparison_engine.download_and_extract_dataset(url, save_path)
-        return jsonify({'success': True, 'path': final_path})
-    except Exception as e:
-        print(f"Download failed: {e}")
-        return jsonify({'error': str(e)}), 500
+    def run_download():
+        try:
+            def progress_cb(p):
+                download_status['progress'] = p
+                
+            def log_cb(msg):
+                download_status['logs'].append(msg)
+                
+            final_path = comparison_engine.download_and_extract_dataset(url, save_path, progress_callback=progress_cb, log_callback=log_cb)
+            download_status['path'] = final_path
+            download_status['logs'].append(f"Download complete! Path: {final_path}")
+        except Exception as e:
+            print(f"Download failed: {e}")
+            download_status['error'] = str(e)
+            download_status['logs'].append(f"Error: {str(e)}")
+        finally:
+            download_status['active'] = False
+
+    # Start background thread
+    threading.Thread(target=run_download).start()
+    
+    return jsonify({'success': True, 'message': 'Download started'})
+
+@app.route('/comparison/download_status', methods=['GET'])
+def comparison_download_status():
+    return jsonify(download_status)
 
 
 

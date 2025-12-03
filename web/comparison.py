@@ -173,20 +173,49 @@ class ComparisonEngine:
         self.dataset = DatasetLoader(path)
         return len(self.dataset), self.dataset.classes
         
-    def download_and_extract_dataset(self, url, save_path):
+    def download_and_extract_dataset(self, url, save_path, progress_callback=None, log_callback=None):
         if not os.path.exists(save_path):
             os.makedirs(save_path)
             
         filename = url.split('/')[-1]
         local_path = os.path.join(save_path, filename)
         
-        print(f"Downloading {url} to {local_path}...")
+        def log(msg):
+            print(msg)
+            if log_callback:
+                log_callback(msg)
+        
+        log(f"Downloading {url} to {local_path}...")
         try:
-            urllib.request.urlretrieve(url, local_path)
+            # Use a User-Agent to avoid being blocked
+            opener = urllib.request.build_opener()
+            opener.addheaders = [('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')]
+            urllib.request.install_opener(opener)
+            
+            # Custom reporthook for progress
+            def reporthook(block_num, block_size, total_size):
+                if progress_callback and total_size > 0:
+                    percent = min(100, int(block_num * block_size * 100 / total_size))
+                    progress_callback(percent)
+                    
+            urllib.request.urlretrieve(url, local_path, reporthook=reporthook)
+            
+            if progress_callback:
+                progress_callback(100)
+            
+            # Check file size
+            if os.path.getsize(local_path) < 1000:
+                # Likely an error page
+                with open(local_path, 'r', errors='ignore') as f:
+                    content = f.read()
+                raise RuntimeError(f"Downloaded file is too small ({os.path.getsize(local_path)} bytes). Content preview: {content[:200]}")
+                
         except Exception as e:
+            if os.path.exists(local_path):
+                os.remove(local_path)
             raise RuntimeError(f"Download failed: {e}")
             
-        print(f"Extracting {local_path}...")
+        log(f"Extracting {local_path}...")
         try:
             if filename.endswith('.zip'):
                 with zipfile.ZipFile(local_path, 'r') as zip_ref:
