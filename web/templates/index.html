@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>na-radio demo</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet">
   <style>
     .video-container {
       position: relative;
@@ -51,7 +51,11 @@
           </div>
           <div class="card-body p-0">
             <div class="video-container">
-              <img src="/video_feed" alt="Video Feed">
+              <img src="/video_feed" alt="Video Feed" id="serverVideoFeed">
+              <video id="browserVideo" autoplay playsinline muted
+                style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></video>
+              <canvas id="browserCanvas"
+                style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></canvas>
             </div>
           </div>
           <div class="card-footer text-muted d-flex justify-content-between">
@@ -103,291 +107,828 @@
 
             <div class="tab-content" id="controlTabsContent">
               <!-- General Tab -->
-              <div class="tab-pane fade show active" id="general" role="tabpanel">
+              <div class="tab-pane show active" id="general" role="tabpanel">
                 <!-- Input Source -->
                 <div class="mb-4">
                   <label class="form-label">Input Source</label>
                   <div class="input-group mb-2">
                     <select class="form-select" id="sourceType" onchange="updateSourceInput()">
-                      <option value="webcam">Webcam</option>
+                      <option value="browser_webcam" selected>Browser Webcam</option>
+                      <option value="webcam">Server Webcam (/dev/video0)</option>
                       <option value="video">Video File / URL</option>
                       <option value="folder">Image Folder / File</option>
                     </select>
                   </div>
                   <div class="input-group mb-2">
                     <input type="text" class="form-control" id="sourceValue" placeholder="Device Index (e.g. 0)"
-                      value="0">
-                    <button class="btn btn-primary" onclick="setInputSource()">Set Source</button>
-                  </div>
-                  <div class="form-text" id="sourceHelp">Enter camera index (0, 1, ...)</div>
-                </div>
-
-                <!-- Model Selection -->
-                <div class="mb-4">
-                  <label for="modelSelect" class="form-label">Model</label>
-                  <select class="form-select mb-2" id="modelSelect" onchange="changeModel()">
-                    <option value="radio" selected>RADIO-v2.5</option>
-                    <option value="siglip">SigLIP</option>
-                    <option value="clip">OpenCLIP</option>
-                    <option value="dinov2">DINOv2</option>
-                    <option value="yolo">Yolo-World</option>
-                    <option value="openyolo3d">OpenYOLO3D</option>
-                    <option value="resnet">ResNet50 (Fallback)</option>
-                  </select>
-                </div>
-              </div>
-
-              <!-- Inference Tab -->
-              <div class="tab-pane fade" id="inference" role="tabpanel">
-                <!-- Vocabulary Mode -->
-                <div class="mb-3">
-                  <label class="form-label">Vocabulary Mode</label>
-                  <div class="form-check">
-                    <input class="form-check-input" type="radio" name="vocabMode" id="modeCustom" value="custom" checked
-                      onchange="handleModeChange()">
-                    <label class="form-check-label" for="modeCustom">Custom</label>
-                  </div>
-                  <div class="form-check">
-                    <input class="form-check-input" type="radio" name="vocabMode" id="modeImageNet" value="imagenet"
-                      onchange="handleModeChange()">
-                    <label class="form-check-label" for="modeImageNet">ImageNet (1000 classes)</label>
-                  </div>
-                  <div class="form-check">
-                    <input class="form-check-input" type="radio" name="vocabMode" id="modeCOCO" value="coco"
-                      onchange="handleModeChange()">
-                    <label class="form-check-label" for="modeCOCO">COCO (80 classes)</label>
-                  </div>
-                </div>
-
-                <!-- Custom Labels -->
-                <div class="mb-3">
-                  <label for="labelInput" class="form-label">Custom Labels (comma-separated)</label>
-                  <input type="text" class="form-control" id="labelInput" placeholder="person, car, dog..."
-                    value="person, car, dog, cat, tree">
-                </div>
-                <button class="btn btn-primary w-100 mb-3" onclick="updateLabels()">Update Vocabulary</button>
-
-                <!-- Resolution -->
-                <div class="mb-3">
-                  <label for="resolutionSelect" class="form-label">Processing Resolution</label>
-                  <select class="form-select" id="resolutionSelect" onchange="updateResolution()">
-                    <option value="1920x1080">1920x1080 (High)</option>
-                    <option value="1280x720">1280x720</option>
-                    <option value="800x600">800x600</option>
-                    <option value="640x480">640x480</option>
-                    <option value="512x512" selected>512x512 (Default)</option>
-                    <option value="320x240">320x240 (Fast)</option>
-                  </select>
-                </div>
-
-                <div class="d-grid gap-2 mb-3">
-                  <button class="btn btn-outline-info" onclick="enableOpenVINO()">
-                    Enable OpenVINO Acceleration
-                  </button>
-                  <button id="heatmapBtn" class="btn btn-outline-danger" onclick="toggleHeatmap()">Enable
-                    Heatmap</button>
-                  <button class="btn btn-warning" onclick="resetInference()">
-                    <i class="bi bi-arrow-counterclockwise"></i> Reset Inference
-                  </button>
-                </div>
-              </div>
-
-              <!-- Training Tab -->
-              <div class="tab-pane fade" id="training" role="tabpanel">
-                <div id="trainingControls" class="d-none">
-                  <h6>Interactive Training</h6>
-                  <div class="d-grid gap-2 mb-3">
-                    <div class="input-group">
-                      <input type="text" class="form-control" id="captureLabel" placeholder="Label (e.g. cup)">
-                      <button class="btn btn-outline-secondary" type="button" onclick="captureSample()">Capture</button>
-                    </div>
-                    <div class="d-flex justify-content-between">
-                      <span id="sampleCount" class="text-muted small">Samples: 0</span>
-                      <span id="trainingStatus" class="text-muted small"></span>
-                    </div>
-                    <button class="btn btn-success" onclick="trainClassifier()">Train Classifier</button>
-                    <button class="btn btn-outline-danger btn-sm" onclick="resetClassifier()">Reset Training</button>
-                  </div>
-
-                  <hr>
-                  <h6>Load Dataset</h6>
-                  <div class="input-group mb-3">
-                    <input type="text" class="form-control" id="datasetPath" placeholder="/path/to/dataset">
-                    <button class="btn btn-outline-primary" type="button" onclick="loadDataset()">Load</button>
-                  </div>
-
-                  <hr>
-                  <h6>Online Dataset</h6>
-                  <div class="mb-3">
-                    <select class="form-select mb-2" id="onlineDsType" onchange="toggleOnlineUrl()">
-                      <option value="cifar10">CIFAR-10 (Python version)</option>
-                      <option value="url">Custom Zip/Tar URL</option>
-                    </select>
-                    <input type="text" class="form-control mb-2 d-none" id="onlineDsUrl"
-                      placeholder="https://example.com/dataset.zip">
-                    <button class="btn btn-outline-primary w-100" type="button" onclick="downloadDataset()">Download &
-                      Train</button>
-                  </div>
-                </div>
-                <div id="trainingPlaceholder" class="text-muted text-center mt-3">
-                  <small>Select <strong>DINOv2</strong> model to enable training.</small>
-                </div>
-              </div>
-
-              <!-- Comparison Tab -->
-              <div class="tab-pane fade" id="comparison" role="tabpanel">
-                <div class="mb-3">
-                  <label class="form-label">Dataset Path</label>
-                  <div class="input-group">
-                    <input type="text" class="form-control" id="compDatasetPath" placeholder="/path/to/dataset">
-                    <button class="btn btn-outline-primary" onclick="loadCompDataset()">Load</button>
-                  </div>
-                  <div class="form-text">Must contain 'images' and 'masks' folders.</div>
-                </div>
-
-                <div class="mb-3 border-top pt-3">
-                  <h6>Download Dataset</h6>
-                  <div class="input-group mb-2">
-                    <input type="text" class="form-control" id="compDownloadUrl"
-                      placeholder="https://example.com/dataset.zip">
-                    <button class="btn btn-outline-secondary" onclick="downloadCompDataset()">Download</button>
-                  </div>
-                  <div class="d-flex gap-2 align-items-center">
-                    <select class="form-select form-select-sm" id="compPresetSelect" onchange="applyPreset()"
-                      style="max-width: 200px;">
-                      <option value="">Select Preset...</option>
-                      <option value="https://data.brainchip.com/dataset-mirror/voc/VOCtrainval_11-May-2012.tar">Pascal
-                        VOC 2012 (2GB)</option>
-                      <option value="https://cvg-data.inf.ethz.ch/nice-slam/data/Replica.zip">Nice-SLAM Replica (2.5GB)
-                        ```
-                        - Inference Only</option>
-                      <option value="demo">Demo Dataset (Small)</option>
-                    </select>
-                    <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal"
-                      data-bs-target="#datasetHelpModal">
-                      <i class="bi bi-question-circle"></i> Help / Restricted Datasets
+                      value="0" disabled>
+                    <button class="btn btn-primary" onclick="setInputSource()" id="setSourceBtn">Set Source</button>
+                    <button class="btn btn-outline-secondary d-none" id="switchCameraBtn" onclick="switchCamera()">
+                      <i class="bi bi-camera-video"></i> Switch Cam
                     </button>
                   </div>
+                  <div class="form-text" id="sourceHelp">Uses your browser's camera directly.</div>
 
-                  <!-- Progress Bar -->
-                  <div id="downloadProgressContainer" class="mt-3 d-none">
-                    <label class="form-label small">Download Progress</label>
-                    <div class="progress mb-2">
-                      <div id="downloadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
-                        role="progressbar" style="width: 0%">0%</div>
+                  <!-- Model Selection -->
+                  <div class="mb-4">
+                    <label for="modelSelect" class="form-label">Model</label>
+                    <select class="form-select mb-2" id="modelSelect" onchange="changeModel()">
+                      <option value="radio" selected>RADIO-v2.5</option>
+                      <option value="siglip">SigLIP</option>
+                      <option value="clip">OpenCLIP</option>
+                      <option value="dinov2">DINOv2</option>
+                      <option value="yolo">Yolo-World</option>
+                      <option value="openyolo3d">OpenYOLO3D</option>
+                      <option value="resnet">ResNet50 (Fallback)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Inference Tab -->
+                <div class="tab-pane" id="inference" role="tabpanel">
+                  <!-- Vocabulary Mode -->
+                  <div class="mb-3">
+                    <label class="form-label">Vocabulary Mode</label>
+                    <div class="form-check">
+                      <input class="form-check-input" type="radio" name="vocabMode" id="modeCustom" value="custom"
+                        checked onchange="handleModeChange()">
+                      <label class="form-check-label" for="modeCustom">Custom</label>
+                    </div>
+                    <div class="form-check">
+                      <input class="form-check-input" type="radio" name="vocabMode" id="modeImageNet" value="imagenet"
+                        onchange="handleModeChange()">
+                      <label class="form-check-label" for="modeImageNet">ImageNet (1000 classes)</label>
+                    </div>
+                    <div class="form-check">
+                      <input class="form-check-input" type="radio" name="vocabMode" id="modeCOCO" value="coco"
+                        onchange="handleModeChange()">
+                      <label class="form-check-label" for="modeCOCO">COCO (80 classes)</label>
+                    </div>
+                  </div>
+
+                  <!-- Custom Labels -->
+                  <div class="mb-3">
+                    <label for="labelInput" class="form-label">Custom Labels (comma-separated)</label>
+                    <input type="text" class="form-control" id="labelInput" placeholder="person, car, dog..."
+                      value="person, car, dog, cat, tree">
+                  </div>
+                  <button class="btn btn-primary w-100 mb-3" onclick="updateLabels()">Update Vocabulary</button>
+
+                  <!-- Resolution -->
+                  <div class="mb-3">
+                    <label for="resolutionSelect" class="form-label">Processing Resolution</label>
+                    <select class="form-select" id="resolutionSelect" onchange="updateResolution()">
+                      <option value="1920x1080">1920x1080 (High)</option>
+                      <option value="1280x720">1280x720</option>
+                      <option value="800x600">800x600</option>
+                      <option value="640x480">640x480</option>
+                      <option value="512x512" selected>512x512 (Default)</option>
+                      <option value="320x240">320x240 (Fast)</option>
+                    </select>
+                  </div>
+
+                  <div class="d-grid gap-2 mb-3">
+                    <button class="btn btn-outline-info" onclick="enableOpenVINO()">
+                      Enable OpenVINO Acceleration
+                    </button>
+                    <button id="heatmapBtn" class="btn btn-outline-danger" onclick="toggleHeatmap()">Enable
+                      Heatmap</button>
+                    <button class="btn btn-warning" onclick="resetInference()">
+                      <i class="bi bi-arrow-counterclockwise"></i> Reset Inference
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Training Tab -->
+                <div class="tab-pane" id="training" role="tabpanel">
+                  <div id="trainingControls" class="d-none">
+                    <h6>Interactive Training</h6>
+                    <div class="d-grid gap-2 mb-3">
+                      <div class="input-group">
+                        <input type="text" class="form-control" id="captureLabel" placeholder="Label (e.g. cup)">
+                        <button class="btn btn-outline-secondary" type="button"
+                          onclick="captureSample()">Capture</button>
+                      </div>
+                      <div class="d-flex justify-content-between">
+                        <span id="sampleCount" class="text-muted small">Samples: 0</span>
+                        <span id="trainingStatus" class="text-muted small"></span>
+                      </div>
+                      <button class="btn btn-success" onclick="trainClassifier()">Train Classifier</button>
+                      <button class="btn btn-outline-danger btn-sm" onclick="resetClassifier()">Reset Training</button>
                     </div>
 
-                    <!-- Logs -->
-                    <div class="accordion" id="downloadLogsAccordion">
-                      <div class="accordion-item">
-                        <h2 class="accordion-header" id="headingLogs">
-                          <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
-                            data-bs-target="#collapseLogs" aria-expanded="false" aria-controls="collapseLogs">
-                            Show Logs
-                          </button>
-                        </h2>
-                        <div id="collapseLogs" class="accordion-collapse collapse" aria-labelledby="headingLogs"
-                          data-bs-parent="#downloadLogsAccordion">
-                          <div class="accordion-body p-2 bg-light">
-                            <pre id="downloadLogs" class="mb-0 small"
-                              style="max-height: 150px; overflow-y: auto; white-space: pre-wrap;"></pre>
+                    <hr>
+                    <h6>Load Dataset</h6>
+                    <div class="input-group mb-3">
+                      <input type="text" class="form-control" id="datasetPath" placeholder="/path/to/dataset">
+                      <button class="btn btn-outline-primary" type="button" onclick="loadDataset()">Load</button>
+                    </div>
+
+                    <hr>
+                    <h6>Online Dataset</h6>
+                    <div class="mb-3">
+                      <select class="form-select mb-2" id="onlineDsType" onchange="toggleOnlineUrl()">
+                        <option value="cifar10">CIFAR-10 (Python version)</option>
+                        <option value="url">Custom Zip/Tar URL</option>
+                      </select>
+                      <input type="text" class="form-control mb-2 d-none" id="onlineDsUrl"
+                        placeholder="https://example.com/dataset.zip">
+                      <button class="btn btn-outline-primary w-100" type="button" onclick="downloadDataset()">Download &
+                        Train</button>
+                    </div>
+                  </div>
+                  <div id="trainingPlaceholder" class="text-muted text-center mt-3">
+                    <small>Select <strong>DINOv2</strong> model to enable training.</small>
+                  </div>
+                </div>
+
+                <!-- Comparison Tab -->
+                <div class="tab-pane" id="comparison" role="tabpanel">
+                  <div class="mb-3">
+                    <label class="form-label">Dataset Path</label>
+                    <div class="input-group">
+                      <input type="text" class="form-control" id="compDatasetPath" placeholder="/path/to/dataset">
+                      <button class="btn btn-outline-primary" onclick="loadCompDataset()">Load</button>
+                    </div>
+                    <div class="form-text">Must contain 'images' and 'masks' folders.</div>
+                  </div>
+
+                  <div class="mb-3 border-top pt-3">
+                    <h6>Download Dataset</h6>
+                    <div class="input-group mb-2">
+                      <input type="text" class="form-control" id="compDownloadUrl"
+                        placeholder="https://example.com/dataset.zip">
+                      <button class="btn btn-outline-secondary" onclick="downloadCompDataset()">Download</button>
+                    </div>
+                    <div class="d-flex gap-2 align-items-center">
+                      <select class="form-select form-select-sm" id="compPresetSelect" onchange="applyPreset()"
+                        style="max-width: 200px;">
+                        <option value="">Select Preset...</option>
+                        <option value="https://data.brainchip.com/dataset-mirror/voc/VOCtrainval_11-May-2012.tar">Pascal
+                          VOC 2012 (2GB)</option>
+                        <option value="https://cvg-data.inf.ethz.ch/nice-slam/data/Replica.zip">Nice-SLAM Replica
+                          (2.5GB)
+                          ```
+                          - Inference Only</option>
+                        <option value="demo">Demo Dataset (Small)</option>
+                      </select>
+                      <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal"
+                        data-bs-target="#datasetHelpModal">
+                        <i class="bi bi-question-circle"></i> Help / Restricted Datasets
+                      </button>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div id="downloadProgressContainer" class="mt-3 d-none">
+                      <label class="form-label small">Download Progress</label>
+                      <div class="progress mb-2">
+                        <div id="downloadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                          role="progressbar" style="width: 0%">0%</div>
+                      </div>
+
+                      <!-- Logs -->
+                      <div class="accordion" id="downloadLogsAccordion">
+                        <div class="accordion-item">
+                          <h2 class="accordion-header" id="headingLogs">
+                            <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse"
+                              data-bs-target="#collapseLogs" aria-expanded="false" aria-controls="collapseLogs">
+                              Show Logs
+                            </button>
+                          </h2>
+                          <div id="collapseLogs" class="accordion-collapse collapse" aria-labelledby="headingLogs"
+                            data-bs-parent="#downloadLogsAccordion">
+                            <div class="accordion-body p-2 bg-light">
+                              <pre id="downloadLogs" class="mb-0 small"
+                                style="max-height: 150px; overflow-y: auto; white-space: pre-wrap;"></pre>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                <div id="compControls" class="d-none border-top pt-3">
-                  <div class="mb-3">
-                    <label class="form-label">Target Class</label>
-                    <select class="form-select" id="compClassSelect">
-                      <option value="">Select a class...</option>
-                    </select>
-                  </div>
+                  <div id="compControls" class="d-none border-top pt-3">
+                    <div class="mb-3">
+                      <label class="form-label">Target Class</label>
+                      <select class="form-select" id="compClassSelect">
+                        <option value="">Select a class...</option>
+                      </select>
+                    </div>
 
-                  <div class="d-grid gap-2 mb-3">
-                    <button class="btn btn-primary" onclick="runComparison()">Run Comparison</button>
-                  </div>
+                    <div class="d-grid gap-2 mb-3">
+                      <button class="btn btn-primary" onclick="runComparison()">Run Comparison</button>
+                    </div>
 
-                  <div id="compResults" class="d-none">
-                    <h6>Results</h6>
-                    <table class="table table-sm table-bordered">
-                      <thead>
-                        <tr>
-                          <th>Metric</th>
-                          <th>Value</th>
-                        </tr>
-                      </thead>
-                      <tbody id="compResultsBody">
-                      </tbody>
-                    </table>
-                    <div class="text-muted small" id="compStatus"></div>
+                    <div id="compResults" class="d-none">
+                      <h6>Results</h6>
+                      <table class="table table-sm table-bordered">
+                        <thead>
+                          <tr>
+                            <th>Metric</th>
+                            <th>Value</th>
+                          </tr>
+                        </thead>
+                        <tbody id="compResultsBody">
+                        </tbody>
+                      </table>
+                      <div class="text-muted small" id="compStatus"></div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-        </div>
-      </div>
-    </div>
-
-    <!-- Dataset Help Modal -->
-    <div class="modal fade" id="datasetHelpModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Dataset Help</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <h6>Supported Formats</h6>
-            <p>The tool supports datasets in ZIP or Tar archives. The extracted folder should contain:</p>
-            <ul>
-              <li><code>images/</code> and <code>masks/</code> subdirectories (Standard)</li>
-              <li>OR <code>JPEGImages/</code> and <code>SegmentationClass/</code> subdirectories (Pascal VOC style)</li>
-              <li>OR <code>rgb/</code> and <code>semantic_class/</code> subdirectories (Semantic-NeRF style)</li>
-              <li>OR <code>results/</code> with <code>frame*.jpg</code> (Nice-SLAM style - Images Only)</li>
-            </ul>
-
-            <h6>Restricted / Other Datasets</h6>
-            <p><strong>ScanRefer, Nr3D, Sr3D</strong>: Require ScanNet access. Download manually.</p>
-            <p><strong>Semantic-NeRF Replica</strong>: Contains semantic masks. Available via <a
-                href="https://github.com/Harry-Zhi/semantic_nerf#datasets" target="_blank">Dropbox link in their
-                repo</a>.</p>
-            <p><strong>TartanAirV2</strong>: Download using <a href="https://github.com/castacks/tartanair_tools"
-                target="_blank">tartanairpy</a>.</p>
-
-            <p><strong>How to use them:</strong></p>
-            <ol>
-              <li>Download and extract the dataset locally.</li>
-              <li>Place the folder in a path accessible to this application.</li>
-              <li>Enter the local path in the "Dataset Path" field.</li>
-            </ol>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
           </div>
         </div>
       </div>
-    </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-      function toggleCustomInput() {
-        const isCustom = document.getElementById('modeCustom').checked;
-        document.getElementById('labelInput').disabled = !isCustom;
-      }
+      <!-- Dataset Help Modal -->
+      <div class="modal fade" id="datasetHelpModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">Dataset Help</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <h6>Supported Formats</h6>
+              <p>The tool supports datasets in ZIP or Tar archives. The extracted folder should contain:</p>
+              <ul>
+                <li><code>images/</code> and <code>masks/</code> subdirectories (Standard)</li>
+                <li>OR <code>JPEGImages/</code> and <code>SegmentationClass/</code> subdirectories (Pascal VOC style)
+                </li>
+                <li>OR <code>rgb/</code> and <code>semantic_class/</code> subdirectories (Semantic-NeRF style)</li>
+                <li>OR <code>results/</code> with <code>frame*.jpg</code> (Nice-SLAM style - Images Only)</li>
+              </ul>
 
-      async function updatePredictions() {
-        try {
-          const resp = await fetch('/predictions');
-          const data = await resp.json();
+              <h6>Restricted / Other Datasets</h6>
+              <p><strong>ScanRefer, Nr3D, Sr3D</strong>: Require ScanNet access. Download manually.</p>
+              <p><strong>Semantic-NeRF Replica</strong>: Contains semantic masks. Available via <a
+                  href="https://github.com/Harry-Zhi/semantic_nerf#datasets" target="_blank">Dropbox link in their
+                  repo</a>.</p>
+              <p><strong>TartanAirV2</strong>: Download using <a href="https://github.com/castacks/tartanair_tools"
+                  target="_blank">tartanairpy</a>.</p>
+
+              <p><strong>How to use them:</strong></p>
+              <ol>
+                <li>Download and extract the dataset locally.</li>
+                <li>Place the folder in a path accessible to this application.</li>
+                <li>Enter the local path in the "Dataset Path" field.</li>
+              </ol>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+      <script>
+        function toggleCustomInput() {
+          const isCustom = document.getElementById('modeCustom').checked;
+          document.getElementById('labelInput').disabled = !isCustom;
+        }
+
+        async function updatePredictions() {
+          try {
+            const resp = await fetch('/predictions');
+            const data = await resp.json();
+            const ul = document.getElementById('pred-list');
+            ul.innerHTML = '';
+
+            if (data.length === 0) {
+              ul.innerHTML = '<li class="list-group-item text-muted">No predictions</li>';
+              return;
+            }
+
+            for (const [label, score] of data) {
+              const li = document.createElement('li');
+              li.className = 'list-group-item d-flex justify-content-between align-items-center pred-item';
+
+              // Colorize high confidence
+              let badgeClass = 'bg-secondary';
+              if (score > 0.3) badgeClass = 'bg-primary';
+              if (score > 0.5) badgeClass = 'bg-success';
+
+              li.innerHTML = `
+              ${label}
+              <span class="badge ${badgeClass} rounded-pill">${score.toFixed(3)}</span>
+            `;
+              ul.appendChild(li);
+            }
+          } catch (e) {
+            console.warn('Pred fetch failed', e);
+          }
+        }
+
+        async function updateStatus() {
+          try {
+            const resp = await fetch('/status');
+            const data = await resp.json();
+
+            // Camera Status
+            const stBadge = document.getElementById('status-badge');
+            if (data.camera_open) {
+              stBadge.textContent = 'Connected';
+              stBadge.className = 'badge bg-success';
+            } else {
+              stBadge.textContent = 'No Camera';
+              stBadge.className = 'badge bg-danger';
+            }
+
+            // Encoder Name
+            if (data.encoder) {
+              document.getElementById('encoder-name').textContent = `Encoder: ${data.encoder}`;
+            }
+
+            // Stats
+            if (data.fps !== undefined) {
+              // Only update if NOT in browser webcam mode (which updates locally)
+              const type = document.getElementById('sourceType').value;
+              if (type !== 'browser_webcam') {
+                document.getElementById('fps-display').textContent = `FPS: ${data.fps}`;
+                document.getElementById('inference-display').textContent = `Inference: ${data.inference_time_ms} ms`;
+              }
+              if (data.memory_usage) {
+                document.getElementById('memory-display').textContent = `Mem: ${data.memory_usage.toFixed(0)} MB`;
+              }
+            }
+
+            // Heatmap Button
+            const hmBtn = document.getElementById('heatmapBtn');
+            if (data.heatmap_enabled) {
+              hmBtn.textContent = 'Disable Heatmap';
+              hmBtn.className = 'btn btn-danger w-100';
+            } else {
+              hmBtn.textContent = 'Enable Heatmap';
+              hmBtn.className = 'btn btn-outline-danger w-100';
+            }
+
+          } catch (e) {
+            console.warn('Status fetch failed', e);
+          }
+        }
+
+        async function updateLabels() {
+          const mode = document.querySelector('input[name="vocabMode"]:checked').value;
+          const labels = document.getElementById('labelInput').value;
+
+          try {
+            const resp = await fetch('/update_labels', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mode: mode,
+                labels: labels
+              })
+            });
+            const data = await resp.json();
+            if (data.success) {
+              const btn = document.querySelector('button[onclick="updateLabels()"]');
+              const originalText = btn.textContent;
+              btn.textContent = 'Saved!';
+              btn.className = 'btn btn-success w-100 mb-3';
+              setTimeout(() => {
+                btn.textContent = originalText;
+                btn.className = 'btn btn-primary w-100 mb-3';
+              }, 2000);
+            } else {
+              alert('Error: ' + data.error);
+            }
+          } catch (e) {
+            console.error('Update labels failed', e);
+            alert('Failed to update labels');
+          }
+        }
+
+        function toggleHeatmap() {
+          fetch('/toggle_heatmap', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+              // heatmapEnabled = data.heatmap_enabled; // This variable is not defined in the original code.
+              updateStatus(); // Rely on updateStatus to refresh UI based on server state
+            })
+            .catch(e => {
+              console.error('Toggle heatmap failed', e);
+            });
+        }
+
+        function resetInference() {
+          fetch('/reset_inference', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+              if (data.success) {
+                alert('Inference reset successfully. Re-encoding labels...');
+              } else {
+                alert('Failed to reset inference.');
+              }
+            })
+            .catch(err => {
+              console.error(err);
+              alert('Error resetting inference.');
+            });
+        }
+
+        function updateResolution() {
+          const select = document.getElementById('resolutionSelect');
+          const [w, h] = select.value.split('x').map(Number);
+
+          fetch('/update_resolution', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ width: w, height: h })
+          })
+            .then(response => response.json())
+            .then(data => {
+              if (data.success) {
+                console.log('Resolution updated to', w, h);
+              } else {
+                alert('Failed to update resolution');
+              }
+            })
+            .catch(err => console.error('Error updating resolution:', err));
+        }
+
+        function changeModel() {
+          const model = document.getElementById('modelSelect').value;
+          const btn = document.getElementById('modelSelect');
+          btn.disabled = true;
+
+          // Show/Hide training controls
+          const trainingControls = document.getElementById('trainingControls');
+          const trainingPlaceholder = document.getElementById('trainingPlaceholder');
+          if (model === 'dinov2') {
+            trainingControls.classList.remove('d-none');
+            if (trainingPlaceholder) trainingPlaceholder.classList.add('d-none');
+          } else {
+            trainingControls.classList.add('d-none');
+            if (trainingPlaceholder) trainingPlaceholder.classList.remove('d-none');
+          }
+
+          fetch('/change_model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: model })
+          })
+            .then(response => response.json())
+            .then(data => {
+              if (data.success) {
+                console.log('Switched to model:', data.model);
+                // alert('Switched to ' + data.model);
+              } else {
+                alert('Failed to switch model: ' + data.error);
+                // Revert selection?
+              }
+            })
+            .catch(err => {
+              console.error('Error switching model:', err);
+              alert('Error switching model');
+            })
+            .finally(() => {
+              btn.disabled = false;
+            });
+        }
+
+        function enableOpenVINO() {
+          const btn = document.querySelector('button[onclick="enableOpenVINO()"]');
+          const orig = btn.textContent;
+          btn.textContent = 'Compiling... (may take time)';
+          btn.disabled = true;
+
+          fetch('/enable_openvino', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                alert('OpenVINO enabled! Model: ' + data.model);
+                btn.textContent = 'OpenVINO Enabled';
+                btn.className = 'btn btn-info w-100';
+              } else {
+                alert('Failed: ' + data.error);
+                btn.textContent = orig;
+                btn.disabled = false;
+              }
+            })
+            .catch(e => {
+              console.error(e);
+              alert('Error enabling OpenVINO');
+              btn.textContent = orig;
+              btn.disabled = false;
+            });
+        }
+
+        function captureSample() {
+          const label = document.getElementById('captureLabel').value;
+          if (!label) {
+            alert('Please enter a label first');
+            return;
+          }
+
+          fetch('/capture_sample', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label: label })
+          })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                document.getElementById('sampleCount').textContent = `Samples: ${data.samples_count}`;
+                // Flash success
+                const btn = document.querySelector('button[onclick="captureSample()"]');
+                const orig = btn.textContent;
+                btn.textContent = 'OK';
+                setTimeout(() => btn.textContent = orig, 1000);
+              } else {
+                alert('Capture failed: ' + data.error);
+              }
+            });
+        }
+
+        function trainClassifier() {
+          const status = document.getElementById('trainingStatus');
+          status.textContent = 'Training...';
+
+          fetch('/train_classifier', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                status.textContent = 'Ready';
+                status.className = 'text-success small fw-bold';
+                alert('Training complete! Classes: ' + data.classes.join(', '));
+              } else {
+                status.textContent = 'Error';
+                status.className = 'text-danger small fw-bold';
+                alert('Training failed: ' + data.error);
+              }
+            });
+        }
+
+        function resetClassifier() {
+          if (!confirm('Clear all samples and trained model?')) return;
+
+          fetch('/reset_classifier', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                document.getElementById('sampleCount').textContent = 'Samples: 0';
+                document.getElementById('trainingStatus').textContent = '';
+                alert('Reset complete');
+              }
+            });
+        }
+
+        function loadDataset() {
+          const path = document.getElementById('datasetPath').value;
+          if (!path) {
+            alert('Please enter a dataset path');
+            return;
+          }
+
+          const btn = document.querySelector('button[onclick="loadDataset()"]');
+          const orig = btn.textContent;
+          btn.textContent = 'Loading...';
+          btn.disabled = true;
+
+          fetch('/load_dataset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path })
+          })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                alert(`Loaded ${data.count} images from classes: ${data.classes.join(', ')}`);
+                // Update sample count (approximate, or fetch fresh status?)
+                // For now just alert.
+              } else {
+                alert('Load failed: ' + data.error);
+              }
+            })
+            .finally(() => {
+              btn.textContent = orig;
+              btn.disabled = false;
+            });
+        }
+
+        function toggleOnlineUrl() {
+          const type = document.getElementById('onlineDsType').value;
+          const urlInput = document.getElementById('onlineDsUrl');
+          if (type === 'url') {
+            urlInput.classList.remove('d-none');
+          } else {
+            urlInput.classList.add('d-none');
+          }
+        }
+
+        function downloadDataset() {
+          const type = document.getElementById('onlineDsType').value;
+          let url = null;
+          if (type === 'url') {
+            url = document.getElementById('onlineDsUrl').value;
+            if (!url) {
+              alert('Please enter a URL');
+              return;
+            }
+          }
+
+          const btn = document.querySelector('button[onclick="downloadDataset()"]');
+          const orig = btn.textContent;
+          btn.textContent = 'Downloading...';
+          btn.disabled = true;
+
+          fetch('/download_dataset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: type, url: url })
+          })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                alert(`Downloaded & Processed ${data.count} images from classes: ${data.classes.join(', ')}`);
+              } else {
+                alert('Download failed: ' + data.error);
+              }
+            })
+            .finally(() => {
+              btn.textContent = orig;
+              btn.disabled = false;
+            });
+        }
+
+        let browserStream = null;
+        let browserLoopId = null;
+        let currentFacingMode = 'environment'; // Default to rear camera
+
+        function updateSourceInput() {
+          const type = document.getElementById('sourceType').value;
+          const input = document.getElementById('sourceValue');
+          const help = document.getElementById('sourceHelp');
+
+          if (type === 'webcam') {
+            input.placeholder = 'Device Index (e.g. 0)';
+            input.value = '0';
+            help.textContent = 'Enter camera index (0, 1, ...)';
+            document.getElementById('switchCameraBtn').classList.add('d-none');
+          } else if (type === 'video') {
+            input.placeholder = '/path/to/video.mp4 or http://...';
+            input.value = '';
+            help.textContent = 'Enter absolute path or URL';
+          } else if (type === 'browser_webcam') {
+            input.placeholder = 'N/A';
+            input.value = '';
+            input.disabled = true;
+            help.textContent = 'Uses your browser\'s camera directly.';
+            document.getElementById('switchCameraBtn').classList.remove('d-none');
+          } else {
+            input.placeholder = '/path/to/folder or /path/to/image.jpg';
+            input.value = '';
+            help.textContent = 'Enter absolute path to folder or image';
+          }
+
+          if (type !== 'browser_webcam') {
+            input.disabled = false;
+          }
+        }
+
+        function switchCamera() {
+          currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
+          stopBrowserWebcam();
+          startBrowserWebcam();
+        }
+
+        function startBrowserWebcam() {
+          const video = document.getElementById('browserVideo');
+          const canvas = document.getElementById('browserCanvas');
+          const serverImg = document.getElementById('serverVideoFeed');
+
+          // Hide server feed, show canvas
+          serverImg.style.display = 'none';
+          canvas.style.display = 'block';
+          // video.style.display = 'block'; // We draw to canvas, so video can stay hidden or used for debug
+
+          // Use 'environment' facing mode for mobile rear cameras
+          const constraints = {
+            video: {
+              facingMode: currentFacingMode
+            }
+          };
+
+          navigator.mediaDevices.getUserMedia(constraints)
+            .then(stream => {
+              browserStream = stream;
+              video.srcObject = stream;
+              video.play();
+
+              // Start processing loop
+              processBrowserFrame();
+            })
+            .catch(err => {
+              console.error("Error accessing webcam:", err);
+              alert("Could not access webcam. Please allow permissions.");
+              stopBrowserWebcam();
+            });
+        }
+
+        function stopBrowserWebcam() {
+          if (browserStream) {
+            browserStream.getTracks().forEach(track => track.stop());
+            browserStream = null;
+          }
+          if (browserLoopId) {
+            clearTimeout(browserLoopId);
+            browserLoopId = null;
+          }
+
+          document.getElementById('browserVideo').srcObject = null;
+          document.getElementById('browserCanvas').style.display = 'none';
+          document.getElementById('serverVideoFeed').style.display = 'block';
+        }
+
+        function processBrowserFrame() {
+          const video = document.getElementById('browserVideo');
+          const canvas = document.getElementById('browserCanvas');
+          const ctx = canvas.getContext('2d');
+
+          if (!browserStream || video.paused || video.ended) {
+            console.log('Loop paused:', { stream: !!browserStream, paused: video.paused, ended: video.ended });
+            browserLoopId = setTimeout(processBrowserFrame, 100);
+            return;
+          }
+
+          // Draw video to canvas (temp for capture)
+          // We need to match canvas size to video size
+          if (video.videoWidth > 0 && canvas.width !== video.videoWidth) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+          }
+
+          // Create a temp canvas to capture frame to send
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = video.videoWidth;
+          tempCanvas.height = video.videoHeight;
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCtx.drawImage(video, 0, 0);
+
+          tempCanvas.toBlob(blob => {
+            if (!blob) return;
+
+            const formData = new FormData();
+            formData.append('frame', blob, 'frame.jpg');
+
+            const t0 = performance.now();
+
+            fetch('/process_frame', {
+              method: 'POST',
+              body: formData
+            })
+              .then(res => res.json())
+              .then(data => {
+                if (data.success) {
+                  // Check if heatmap is enabled (by checking button state or status)
+                  // We can infer it from the fact that we got an image back?
+                  // Actually, let's check the UI button text or store state
+                  const hmBtn = document.getElementById('heatmapBtn');
+                  const isHeatmap = hmBtn.textContent.includes('Disable');
+
+                  if (isHeatmap) {
+                    // Draw processed image (heatmap overlay)
+                    const img = new Image();
+                    img.onload = () => {
+                      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                      canvas.style.display = 'block';
+                      video.style.display = 'none';
+                    };
+                    img.src = 'data:image/jpeg;base64,' + data.image;
+                  } else {
+                    // Show raw video
+                    canvas.style.display = 'none';
+                    video.style.display = 'block';
+                  }
+
+                  // Update predictions
+                  updatePredictionsUI(data.predictions);
+
+                  // Update stats
+                  const t1 = performance.now();
+                  document.getElementById('inference-display').textContent = `Inference: ${(t1 - t0).toFixed(1)} ms`;
+                  document.getElementById('status-badge').textContent = 'Browser Cam';
+                  document.getElementById('status-badge').className = 'badge bg-info';
+                }
+              })
+              .catch(e => console.error(e))
+              .finally(() => {
+                // Schedule next frame
+                browserLoopId = setTimeout(processBrowserFrame, 50); // ~20 FPS cap
+              });
+
+          }, 'image/jpeg', 0.8);
+        }
+
+        function updatePredictionsUI(data) {
           const ul = document.getElementById('pred-list');
           ul.innerHTML = '';
 
-          if (data.length === 0) {
+          if (!data || data.length === 0) {
             ul.innerHTML = '<li class="list-group-item text-muted">No predictions</li>';
             return;
           }
@@ -396,7 +937,6 @@
             const li = document.createElement('li');
             li.className = 'list-group-item d-flex justify-content-between align-items-center pred-item';
 
-            // Colorize high confidence
             let badgeClass = 'bg-secondary';
             if (score > 0.3) badgeClass = 'bg-primary';
             if (score > 0.5) badgeClass = 'bg-success';
@@ -407,603 +947,286 @@
             `;
             ul.appendChild(li);
           }
-        } catch (e) {
-          console.warn('Pred fetch failed', e);
         }
-      }
 
-      async function updateStatus() {
-        try {
-          const resp = await fetch('/status');
-          const data = await resp.json();
+        function setInputSource() {
+          const type = document.getElementById('sourceType').value;
+          console.log('Setting source type:', type);
 
-          // Camera Status
-          const stBadge = document.getElementById('status-badge');
-          if (data.camera_open) {
-            stBadge.textContent = 'Connected';
-            stBadge.className = 'badge bg-success';
+          if (type === 'browser_webcam') {
+            startBrowserWebcam();
+            // Proceed to notify backend
           } else {
-            stBadge.textContent = 'No Camera';
-            stBadge.className = 'badge bg-danger';
+            // Stop browser webcam if running
+            stopBrowserWebcam();
           }
 
-          // Encoder Name
-          if (data.encoder) {
-            document.getElementById('encoder-name').textContent = `Encoder: ${data.encoder}`;
+          const value = document.getElementById('sourceValue').value;
+
+          if (type !== 'browser_webcam' && !value) {
+            alert('Please enter a value');
+            return;
           }
 
-          // Stats
-          if (data.fps !== undefined) {
-            document.getElementById('fps-display').textContent = `FPS: ${data.fps}`;
-            document.getElementById('inference-display').textContent = `Inference: ${data.inference_time_ms} ms`;
-            if (data.memory_usage) {
-              document.getElementById('memory-display').textContent = `Mem: ${data.memory_usage.toFixed(0)} MB`;
-            }
-          }
+          const btn = document.querySelector('button[onclick="setInputSource()"]');
+          const orig = btn.textContent;
+          btn.textContent = 'Setting...';
+          btn.disabled = true;
 
-          // Heatmap Button
-          const hmBtn = document.getElementById('heatmapBtn');
-          if (data.heatmap_enabled) {
-            hmBtn.textContent = 'Disable Heatmap';
-            hmBtn.className = 'btn btn-danger w-100';
-          } else {
-            hmBtn.textContent = 'Enable Heatmap';
-            hmBtn.className = 'btn btn-outline-danger w-100';
-          }
-
-        } catch (e) {
-          console.warn('Status fetch failed', e);
-        }
-      }
-
-      async function updateLabels() {
-        const mode = document.querySelector('input[name="vocabMode"]:checked').value;
-        const labels = document.getElementById('labelInput').value;
-
-        try {
-          const resp = await fetch('/update_labels', {
+          fetch('/set_input_source', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              mode: mode,
-              labels: labels
+            body: JSON.stringify({ type: type, value: value })
+          })
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                // alert('Source updated');
+                // Flash success
+                btn.textContent = 'Success';
+                btn.className = 'btn btn-success';
+                setTimeout(() => {
+                  btn.textContent = orig;
+                  btn.className = 'btn btn-primary';
+                  btn.disabled = false;
+                }, 1000);
+              } else {
+                alert('Error: ' + data.error);
+                btn.textContent = orig;
+                btn.disabled = false;
+              }
             })
-          });
-          const data = await resp.json();
-          if (data.success) {
-            const btn = document.querySelector('button[onclick="updateLabels()"]');
-            const originalText = btn.textContent;
-            btn.textContent = 'Saved!';
-            btn.className = 'btn btn-success w-100 mb-3';
-            setTimeout(() => {
-              btn.textContent = originalText;
-              btn.className = 'btn btn-primary w-100 mb-3';
-            }, 2000);
-          } else {
-            alert('Error: ' + data.error);
-          }
-        } catch (e) {
-          console.error('Update labels failed', e);
-          alert('Failed to update labels');
-        }
-      }
-
-      function toggleHeatmap() {
-        fetch('/toggle_heatmap', { method: 'POST' })
-          .then(response => response.json())
-          .then(data => {
-            // heatmapEnabled = data.heatmap_enabled; // This variable is not defined in the original code.
-            updateStatus(); // Rely on updateStatus to refresh UI based on server state
-          })
-          .catch(e => {
-            console.error('Toggle heatmap failed', e);
-          });
-      }
-
-      function resetInference() {
-        fetch('/reset_inference', { method: 'POST' })
-          .then(response => response.json())
-          .then(data => {
-            if (data.success) {
-              alert('Inference reset successfully. Re-encoding labels...');
-            } else {
-              alert('Failed to reset inference.');
-            }
-          })
-          .catch(err => {
-            console.error(err);
-            alert('Error resetting inference.');
-          });
-      }
-
-      function updateResolution() {
-        const select = document.getElementById('resolutionSelect');
-        const [w, h] = select.value.split('x').map(Number);
-
-        fetch('/update_resolution', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ width: w, height: h })
-        })
-          .then(response => response.json())
-          .then(data => {
-            if (data.success) {
-              console.log('Resolution updated to', w, h);
-            } else {
-              alert('Failed to update resolution');
-            }
-          })
-          .catch(err => console.error('Error updating resolution:', err));
-      }
-
-      function changeModel() {
-        const model = document.getElementById('modelSelect').value;
-        const btn = document.getElementById('modelSelect');
-        btn.disabled = true;
-
-        // Show/Hide training controls
-        const trainingControls = document.getElementById('trainingControls');
-        const trainingPlaceholder = document.getElementById('trainingPlaceholder');
-        if (model === 'dinov2') {
-          trainingControls.classList.remove('d-none');
-          if (trainingPlaceholder) trainingPlaceholder.classList.add('d-none');
-        } else {
-          trainingControls.classList.add('d-none');
-          if (trainingPlaceholder) trainingPlaceholder.classList.remove('d-none');
-        }
-
-        fetch('/change_model', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: model })
-        })
-          .then(response => response.json())
-          .then(data => {
-            if (data.success) {
-              console.log('Switched to model:', data.model);
-              // alert('Switched to ' + data.model);
-            } else {
-              alert('Failed to switch model: ' + data.error);
-              // Revert selection?
-            }
-          })
-          .catch(err => {
-            console.error('Error switching model:', err);
-            alert('Error switching model');
-          })
-          .finally(() => {
-            btn.disabled = false;
-          });
-      }
-
-      function enableOpenVINO() {
-        const btn = document.querySelector('button[onclick="enableOpenVINO()"]');
-        const orig = btn.textContent;
-        btn.textContent = 'Compiling... (may take time)';
-        btn.disabled = true;
-
-        fetch('/enable_openvino', { method: 'POST' })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              alert('OpenVINO enabled! Model: ' + data.model);
-              btn.textContent = 'OpenVINO Enabled';
-              btn.className = 'btn btn-info w-100';
-            } else {
-              alert('Failed: ' + data.error);
+            .catch(e => {
+              console.error(e);
+              alert('Failed to set source');
               btn.textContent = orig;
               btn.disabled = false;
-            }
+            });
+        }
+
+        function loadCompDataset() {
+          const path = document.getElementById('compDatasetPath').value;
+          if (!path) {
+            alert('Please enter a path');
+            return;
+          }
+
+          const btn = document.querySelector('button[onclick="loadCompDataset()"]');
+          const orig = btn.textContent;
+          btn.textContent = 'Loading...';
+          btn.disabled = true;
+
+          fetch('/comparison/load_dataset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path })
           })
-          .catch(e => {
-            console.error(e);
-            alert('Error enabling OpenVINO');
-            btn.textContent = orig;
-            btn.disabled = false;
-          });
-      }
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                alert(`Loaded ${data.count} images.`);
+                const select = document.getElementById('compClassSelect');
+                select.innerHTML = '<option value="">Select a class...</option>';
+                if (data.classes && Object.keys(data.classes).length > 0) {
+                  for (const [id, name] of Object.entries(data.classes)) {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = `${name} (ID: ${id})`;
+                    select.appendChild(opt);
+                  }
+                } else {
+                  // No classes found (Inference Only)
+                  const opt = document.createElement('option');
+                  opt.value = "";
+                  opt.textContent = "No classes found (Inference Only)";
+                  select.appendChild(opt);
 
-      function captureSample() {
-        const label = document.getElementById('captureLabel').value;
-        if (!label) {
-          alert('Please enter a label first');
-          return;
+                  // Auto-switch to custom input
+                  const input = document.getElementById('compTargetClassInput');
+                  if (input.classList.contains('d-none')) {
+                    toggleCustomInput();
+                  }
+                  alert("No classes found in dataset (Inference Only). Please enter a target class manually.");
+                }
+                document.getElementById('compControls').classList.remove('d-none');
+              } else {
+                alert('Error: ' + data.error);
+              }
+            })
+            .catch(e => {
+              console.error(e);
+              alert('Failed to load dataset');
+            })
+            .finally(() => {
+              btn.textContent = orig;
+              btn.disabled = false;
+            });
         }
 
-        fetch('/capture_sample', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label: label })
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              document.getElementById('sampleCount').textContent = `Samples: ${data.samples_count}`;
-              // Flash success
-              const btn = document.querySelector('button[onclick="captureSample()"]');
-              const orig = btn.textContent;
-              btn.textContent = 'OK';
-              setTimeout(() => btn.textContent = orig, 1000);
-            } else {
-              alert('Capture failed: ' + data.error);
-            }
-          });
-      }
+        function runComparison() {
+          const className = document.getElementById('compClassSelect').value;
+          if (!className) {
+            alert('Please select a class');
+            return;
+          }
 
-      function trainClassifier() {
-        const status = document.getElementById('trainingStatus');
-        status.textContent = 'Training...';
+          const btn = document.querySelector('button[onclick="runComparison()"]');
+          const orig = btn.textContent;
+          btn.textContent = 'Running...';
+          btn.disabled = true;
 
-        fetch('/train_classifier', { method: 'POST' })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              status.textContent = 'Ready';
-              status.className = 'text-success small fw-bold';
-              alert('Training complete! Classes: ' + data.classes.join(', '));
-            } else {
-              status.textContent = 'Error';
-              status.className = 'text-danger small fw-bold';
-              alert('Training failed: ' + data.error);
-            }
-          });
-      }
+          document.getElementById('compResults').classList.add('d-none');
 
-      function resetClassifier() {
-        if (!confirm('Clear all samples and trained model?')) return;
-
-        fetch('/reset_classifier', { method: 'POST' })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              document.getElementById('sampleCount').textContent = 'Samples: 0';
-              document.getElementById('trainingStatus').textContent = '';
-              alert('Reset complete');
-            }
-          });
-      }
-
-      function loadDataset() {
-        const path = document.getElementById('datasetPath').value;
-        if (!path) {
-          alert('Please enter a dataset path');
-          return;
-        }
-
-        const btn = document.querySelector('button[onclick="loadDataset()"]');
-        const orig = btn.textContent;
-        btn.textContent = 'Loading...';
-        btn.disabled = true;
-
-        fetch('/load_dataset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: path })
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              alert(`Loaded ${data.count} images from classes: ${data.classes.join(', ')}`);
-              // Update sample count (approximate, or fetch fresh status?)
-              // For now just alert.
-            } else {
-              alert('Load failed: ' + data.error);
-            }
+          fetch('/comparison/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ class_name: className })
           })
-          .finally(() => {
-            btn.textContent = orig;
-            btn.disabled = false;
-          });
-      }
-
-      function toggleOnlineUrl() {
-        const type = document.getElementById('onlineDsType').value;
-        const urlInput = document.getElementById('onlineDsUrl');
-        if (type === 'url') {
-          urlInput.classList.remove('d-none');
-        } else {
-          urlInput.classList.add('d-none');
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                const tbody = document.getElementById('compResultsBody');
+                tbody.innerHTML = '';
+                for (const [metric, value] of Object.entries(data.metrics)) {
+                  const tr = document.createElement('tr');
+                  tr.innerHTML = `<td>${metric}</td><td>${value.toFixed(4)}</td>`;
+                  tbody.appendChild(tr);
+                }
+                document.getElementById('compStatus').textContent = `Processed ${data.samples_processed} samples.`;
+                document.getElementById('compResults').classList.remove('d-none');
+              } else {
+                alert('Error: ' + data.error);
+              }
+            })
+            .catch(e => {
+              console.error(e);
+              alert('Comparison failed');
+            })
+            .finally(() => {
+              btn.textContent = orig;
+              btn.disabled = false;
+            });
         }
-      }
 
-      function downloadDataset() {
-        const type = document.getElementById('onlineDsType').value;
-        let url = null;
-        if (type === 'url') {
-          url = document.getElementById('onlineDsUrl').value;
+        function downloadCompDataset() {
+          const url = document.getElementById('compDownloadUrl').value;
           if (!url) {
             alert('Please enter a URL');
             return;
           }
-        }
 
-        const btn = document.querySelector('button[onclick="downloadDataset()"]');
-        const orig = btn.textContent;
-        btn.textContent = 'Downloading...';
-        btn.disabled = true;
+          const btn = document.querySelector('button[onclick="downloadCompDataset()"]');
+          const orig = btn.textContent;
+          btn.textContent = 'Downloading...';
+          btn.disabled = true;
 
-        fetch('/download_dataset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: type, url: url })
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              alert(`Downloaded & Processed ${data.count} images from classes: ${data.classes.join(', ')}`);
-            } else {
-              alert('Download failed: ' + data.error);
-            }
+          fetch('/comparison/download_dataset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: url })
           })
-          .finally(() => {
-            btn.textContent = orig;
-            btn.disabled = false;
-          });
-      }
+            .then(res => res.json())
+            .then(data => {
+              if (data.success) {
+                // Start polling
+                document.getElementById('downloadProgressContainer').classList.remove('d-none');
+                document.getElementById('downloadProgressBar').style.width = '0%';
+                document.getElementById('downloadProgressBar').textContent = '0%';
+                document.getElementById('downloadLogs').textContent = 'Starting download...';
 
-      function updateSourceInput() {
-        const type = document.getElementById('sourceType').value;
-        const input = document.getElementById('sourceValue');
-        const help = document.getElementById('sourceHelp');
+                // Auto-expand logs
+                const logsCollapse = document.getElementById('collapseLogs');
+                if (!logsCollapse.classList.contains('show')) {
+                  new bootstrap.Collapse(logsCollapse, { show: true });
+                }
 
-        if (type === 'webcam') {
-          input.placeholder = 'Device Index (e.g. 0)';
-          input.value = '0';
-          help.textContent = 'Enter camera index (0, 1, ...)';
-        } else if (type === 'video') {
-          input.placeholder = '/path/to/video.mp4 or http://...';
-          input.value = '';
-          help.textContent = 'Enter absolute path or URL';
-        } else {
-          input.placeholder = '/path/to/folder or /path/to/image.jpg';
-          input.value = '';
-          help.textContent = 'Enter absolute path to folder or image';
-        }
-      }
-
-      function setInputSource() {
-        const type = document.getElementById('sourceType').value;
-        const value = document.getElementById('sourceValue').value;
-
-        if (!value) {
-          alert('Please enter a value');
-          return;
-        }
-
-        const btn = document.querySelector('button[onclick="setInputSource()"]');
-        const orig = btn.textContent;
-        btn.textContent = 'Setting...';
-        btn.disabled = true;
-
-        fetch('/set_input_source', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: type, value: value })
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              // alert('Source updated');
-              // Flash success
-              btn.textContent = 'Success';
-              btn.className = 'btn btn-success';
-              setTimeout(() => {
+                pollDownloadStatus();
+              } else {
+                alert('Download failed: ' + data.error);
                 btn.textContent = orig;
-                btn.className = 'btn btn-primary';
                 btn.disabled = false;
-              }, 1000);
-            } else {
-              alert('Error: ' + data.error);
+              }
+            })
+            .catch(e => {
+              console.error(e);
+              alert('Download request failed');
               btn.textContent = orig;
               btn.disabled = false;
-            }
-          })
-          .catch(e => {
-            console.error(e);
-            alert('Failed to set source');
-            btn.textContent = orig;
-            btn.disabled = false;
-          });
-      }
-
-      function loadCompDataset() {
-        const path = document.getElementById('compDatasetPath').value;
-        if (!path) {
-          alert('Please enter a path');
-          return;
+            });
         }
 
-        const btn = document.querySelector('button[onclick="loadCompDataset()"]');
-        const orig = btn.textContent;
-        btn.textContent = 'Loading...';
-        btn.disabled = true;
+        function pollDownloadStatus() {
+          fetch('/comparison/download_status')
+            .then(res => res.json())
+            .then(data => {
+              const bar = document.getElementById('downloadProgressBar');
+              const logs = document.getElementById('downloadLogs');
+              const btn = document.querySelector('button[onclick="downloadCompDataset()"]');
 
-        fetch('/comparison/load_dataset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: path })
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              alert(`Loaded ${data.count} images.`);
-              const select = document.getElementById('compClassSelect');
-              select.innerHTML = '<option value="">Select a class...</option>';
-              for (const [id, name] of Object.entries(data.classes)) {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = `${name} (ID: ${id})`;
-                select.appendChild(opt);
+              bar.style.width = data.progress + '%';
+              bar.textContent = data.progress + '%';
+
+              logs.textContent = data.logs.join('\n');
+              // Auto scroll to bottom
+              logs.scrollTop = logs.scrollHeight;
+
+              if (data.active) {
+                setTimeout(pollDownloadStatus, 1000);
+              } else {
+                btn.textContent = 'Download';
+                btn.disabled = false;
+
+                if (data.error) {
+                  alert('Download error: ' + data.error);
+                  bar.classList.remove('progress-bar-animated', 'progress-bar-striped', 'bg-primary');
+                  bar.classList.add('bg-danger');
+                } else if (data.path) {
+                  bar.classList.remove('progress-bar-animated', 'progress-bar-striped', 'bg-primary');
+                  bar.classList.add('bg-success');
+                  document.getElementById('compDatasetPath').value = data.path;
+                  alert('Download complete!');
+                  loadCompDataset();
+                }
               }
-              document.getElementById('compControls').classList.remove('d-none');
-            } else {
-              alert('Error: ' + data.error);
-            }
-          })
-          .catch(e => {
-            console.error(e);
-            alert('Failed to load dataset');
-          })
-          .finally(() => {
-            btn.textContent = orig;
-            btn.disabled = false;
-          });
-      }
-
-      function runComparison() {
-        const className = document.getElementById('compClassSelect').value;
-        if (!className) {
-          alert('Please select a class');
-          return;
-        }
-
-        const btn = document.querySelector('button[onclick="runComparison()"]');
-        const orig = btn.textContent;
-        btn.textContent = 'Running...';
-        btn.disabled = true;
-
-        document.getElementById('compResults').classList.add('d-none');
-
-        fetch('/comparison/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ class_name: className })
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              const tbody = document.getElementById('compResultsBody');
-              tbody.innerHTML = '';
-              for (const [metric, value] of Object.entries(data.metrics)) {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${metric}</td><td>${value.toFixed(4)}</td>`;
-                tbody.appendChild(tr);
-              }
-              document.getElementById('compStatus').textContent = `Processed ${data.samples_processed} samples.`;
-              document.getElementById('compResults').classList.remove('d-none');
-            } else {
-              alert('Error: ' + data.error);
-            }
-          })
-          .catch(e => {
-            console.error(e);
-            alert('Comparison failed');
-          })
-          .finally(() => {
-            btn.textContent = orig;
-            btn.disabled = false;
-          });
-      }
-
-      function downloadCompDataset() {
-        const url = document.getElementById('compDownloadUrl').value;
-        if (!url) {
-          alert('Please enter a URL');
-          return;
-        }
-
-        const btn = document.querySelector('button[onclick="downloadCompDataset()"]');
-        const orig = btn.textContent;
-        btn.textContent = 'Downloading...';
-        btn.disabled = true;
-
-        fetch('/comparison/download_dataset', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: url })
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              // Start polling
-              document.getElementById('downloadProgressContainer').classList.remove('d-none');
-              document.getElementById('downloadProgressBar').style.width = '0%';
-              document.getElementById('downloadProgressBar').textContent = '0%';
-              document.getElementById('downloadLogs').textContent = 'Starting download...';
-
-              pollDownloadStatus();
-            } else {
-              alert('Download failed: ' + data.error);
-              btn.textContent = orig;
-              btn.disabled = false;
-            }
-          })
-          .catch(e => {
-            console.error(e);
-            alert('Download request failed');
-            btn.textContent = orig;
-            btn.disabled = false;
-          });
-      }
-
-      function pollDownloadStatus() {
-        fetch('/comparison/download_status')
-          .then(res => res.json())
-          .then(data => {
-            const bar = document.getElementById('downloadProgressBar');
-            const logs = document.getElementById('downloadLogs');
-            const btn = document.querySelector('button[onclick="downloadCompDataset()"]');
-
-            bar.style.width = data.progress + '%';
-            bar.textContent = data.progress + '%';
-
-            logs.textContent = data.logs.join('\n');
-            // Auto scroll to bottom
-            logs.scrollTop = logs.scrollHeight;
-
-            if (data.active) {
-              setTimeout(pollDownloadStatus, 1000);
-            } else {
+            })
+            .catch(e => {
+              console.error("Polling failed", e);
+              const btn = document.querySelector('button[onclick="downloadCompDataset()"]');
               btn.textContent = 'Download';
               btn.disabled = false;
-
-              if (data.error) {
-                alert('Download error: ' + data.error);
-                bar.classList.remove('progress-bar-animated', 'progress-bar-striped', 'bg-primary');
-                bar.classList.add('bg-danger');
-              } else if (data.path) {
-                bar.classList.remove('progress-bar-animated', 'progress-bar-striped', 'bg-primary');
-                bar.classList.add('bg-success');
-                document.getElementById('compDatasetPath').value = data.path;
-                alert('Download complete!');
-                loadCompDataset();
-              }
-            }
-          })
-          .catch(e => {
-            console.error("Polling failed", e);
-            const btn = document.querySelector('button[onclick="downloadCompDataset()"]');
-            btn.textContent = 'Download';
-            btn.disabled = false;
-            alert('Download status polling failed.');
-          });
-      }
-
-      function setDemoDatasetUrl() {
-        // Use a dummy URL or a real one if available. 
-        // For now, let's use a placeholder or a known small dataset.
-        // I'll use a placeholder that points to a non-existent file for now, 
-        // or if I can find a real public small dataset.
-        // Let's use a dummy one for the user to replace.
-        document.getElementById('compDownloadUrl').value = "https://github.com/bjoernellens1/na-radio-standalone/raw/main/test_images/dataset.zip";
-        // Note: This URL likely doesn't exist, but serves as example.
-        alert("Populated with example URL. (Note: This specific URL might not exist, replace with valid zip URL)");
-      }
-
-      function applyPreset() {
-        const select = document.getElementById('compPresetSelect');
-        const val = select.value;
-        if (val === 'demo') {
-          document.getElementById('compDownloadUrl').value = "https://github.com/bjoernellens1/na-radio-standalone/raw/main/test_images/dataset.zip";
-        } else if (val) {
-          document.getElementById('compDownloadUrl').value = val;
+              alert('Download status polling failed.');
+            });
         }
-      }
 
-      setInterval(updateStatus, 1000);
-      updateStatus();
-      setInterval(updatePredictions, 1000);
-    </script>
+        function setDemoDatasetUrl() {
+          // Use a dummy URL or a real one if available. 
+          // For now, let's use a placeholder or a known small dataset.
+          // I'll use a placeholder that points to a non-existent file for now, 
+          // or if I can find a real public small dataset.
+          // Let's use a dummy one for the user to replace.
+          document.getElementById('compDownloadUrl').value = "https://github.com/bjoernellens1/na-radio-standalone/raw/main/test_images/dataset.zip";
+          // Note: This URL likely doesn't exist, but serves as example.
+          alert("Populated with example URL. (Note: This specific URL might not exist, replace with valid zip URL)");
+        }
+
+        function applyPreset() {
+          const select = document.getElementById('compPresetSelect');
+          const val = select.value;
+          if (val === 'demo') {
+            document.getElementById('compDownloadUrl').value = "https://github.com/bjoernellens1/na-radio-standalone/raw/main/test_images/dataset.zip";
+          } else if (val) {
+            document.getElementById('compDownloadUrl').value = val;
+          }
+        }
+
+        setInterval(updateStatus, 1000);
+        updateStatus();
+        setInterval(updatePredictions, 1000);
+        // Initialize correct input state on load
+        document.addEventListener('DOMContentLoaded', () => {
+          updateSourceInput();
+        });
+      </script>
 </body>
 
 </html>

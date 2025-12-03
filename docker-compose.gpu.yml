@@ -1,7 +1,14 @@
 services:
   naradio:
     image: ghcr.io/bjoernellens1/na-radio-standalone:cuda
-    privileged: true
+    build:
+      context: .
+      args:
+        TARGET_ARCH: nvidia
+    # privileged: true
+    ports:
+      - "5000:5000"
+      - "5443:5443"
     devices:
       - nvidia.com/gpu=all
     environment:

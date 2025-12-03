@@ -55,6 +55,10 @@ inference_lock = threading.Lock()
 training_samples = [] # List of (feature_vector, label_string)
 training_lock = threading.Lock()
 
+# Global label vectors for synchronous inference
+current_label_vecs = None
+label_vecs_lock = threading.Lock()
+
 # Input source configuration
 input_config = {
     'type': 'webcam', # webcam, video, image, folder
@@ -160,6 +164,10 @@ def capture_loop(device_index=0, camera_file=None):
                 cap = cv2.VideoCapture(val)
             elif src_type == 'image' or src_type == 'folder':
                 cap = ImageFolderCapture(val)
+            elif src_type == 'browser_webcam':
+                # Do nothing, browser pushes frames
+                cap = None
+                return True
             else:
                 print(f"Unknown source type: {src_type}")
                 cap = None
@@ -195,6 +203,12 @@ def capture_loop(device_index=0, camera_file=None):
                 camera_open = False
         
         if cap is None or not camera_open:
+            # If browser webcam, just sleep and let the API handle frames
+            with input_lock:
+                if input_config['type'] == 'browser_webcam':
+                    time.sleep(1.0)
+                    continue
+            
             time.sleep(0.5)
             # Try to reopen periodically if it failed?
             # For now just wait for user to change source
@@ -236,7 +250,7 @@ def capture_loop(device_index=0, camera_file=None):
 
 
 def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
-    global current_pred, predictions_enabled, last_inference_time, current_labels, label_update_needed, latest_heatmap, current_encoder
+    global current_pred, predictions_enabled, last_inference_time, current_labels, label_update_needed, latest_heatmap, current_encoder, current_label_vecs
     
     # Use global current_labels if labels argument is not provided or to init
     global current_labels, label_update_needed
@@ -245,7 +259,7 @@ def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
     
     # Local state for the loop
     loop_labels = list(current_labels)
-    label_vecs_local = label_vecs
+    # label_vecs_local = label_vecs # Use global now
     
     retry_interval = 5.0
     next_label_retry = 0.0
@@ -266,7 +280,8 @@ def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
         # Check for label updates
         if label_update_needed:
             loop_labels = list(current_labels)
-            label_vecs_local = None # Force re-compute
+            with label_vecs_lock:
+                current_label_vecs = None # Force re-compute
             label_update_needed = False
             print(f"Labels updated in inference loop: {loop_labels}")
 
@@ -295,7 +310,14 @@ def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
         if encoder is not None and loop_labels:
             with inference_lock:
                 now = time.time()
-                if label_vecs_local is None and now >= next_label_retry:
+                
+                # Check if we need to compute label vecs
+                need_compute = False
+                with label_vecs_lock:
+                    if current_label_vecs is None:
+                        need_compute = True
+                        
+                if need_compute and now >= next_label_retry:
                     next_label_retry = now + retry_interval
                     try:
                         if torch.cuda.is_available():
@@ -321,15 +343,23 @@ def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
                             time.sleep(0.02)
                         
                         # Concatenate and move back to GPU
-                        label_vecs_local = torch.cat(vecs_list, dim=0).to(encoder.device)
+                        new_vecs = torch.cat(vecs_list, dim=0).to(encoder.device)
+                        with label_vecs_lock:
+                            current_label_vecs = new_vecs
                         
                         predictions_enabled = True
                         print(f'Precomputed {len(loop_labels)} label vectors successfully')
                     except Exception as e:
                         print(f'Failed to precompute label vectors; retrying in {int(retry_interval)}s', repr(e))
-                        label_vecs_local = None
+                        with label_vecs_lock:
+                            current_label_vecs = None
                 
-                if label_vecs_local is not None or (hasattr(encoder, 'predict_custom') and hasattr(encoder, 'custom_head') and encoder.custom_head is not None) or hasattr(encoder, 'predict'):
+                # Get current vecs safely
+                local_vecs = None
+                with label_vecs_lock:
+                    local_vecs = current_label_vecs
+
+                if local_vecs is not None or (hasattr(encoder, 'predict_custom') and hasattr(encoder, 'custom_head') and encoder.custom_head is not None) or hasattr(encoder, 'predict'):
                     try:
                         t0 = time.time()
                         if hasattr(encoder, 'predict_custom') and hasattr(encoder, 'custom_head') and encoder.custom_head is not None:
@@ -343,7 +373,7 @@ def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
                              # Use encoder's native predict method (e.g. Yolo)
                              preds = encoder.predict(frame_to_process)
                         else:
-                             preds = _compute_predictions(frame_to_process, encoder, label_vecs_local, loop_labels, input_resolution)
+                             preds = _compute_predictions(frame_to_process, encoder, local_vecs, loop_labels, input_resolution)
 
 
                         last_inference_time = (time.time() - t0) * 1000  # ms
@@ -356,7 +386,8 @@ def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
                                 top_vec = None
                                 if top_label in loop_labels:
                                     idx = loop_labels.index(top_label)
-                                    top_vec = label_vecs_local[idx].unsqueeze(0)
+                                    if local_vecs is not None:
+                                        top_vec = local_vecs[idx].unsqueeze(0)
                                 elif hasattr(encoder, 'encode_labels'):
                                     # Try to encode on the fly (e.g. for DINOv2 custom labels not in UI list)
                                     try:
@@ -412,6 +443,107 @@ def inference_loop(label_vecs=None, labels=None, input_resolution=(512, 512)):
             current_pred = preds
 
         time.sleep(0.01) # Don't spin too fast if inference is super fast
+
+
+def process_frame_sync(frame_bytes):
+    """Synchronous processing for browser-based webcam."""
+    global current_encoder, current_labels, heatmap_enabled, current_frame
+    
+    # Decode image
+    nparr = np.frombuffer(frame_bytes, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("Failed to decode image")
+        
+    # Update global frame for remote viewing
+    with frame_lock:
+        current_frame = frame.copy()
+        
+    encoder = None
+    with model_lock:
+        encoder = current_encoder
+        
+    if encoder is None:
+        return frame, []
+        
+    preds = []
+    
+    # Get label vecs
+    local_vecs = None
+    with label_vecs_lock:
+        local_vecs = current_label_vecs
+        
+    # Resolution
+    input_resolution = (512, 512)
+    if hasattr(encoder, 'input_resolution'):
+        input_resolution = encoder.input_resolution
+        
+    try:
+        if hasattr(encoder, 'predict_custom') and hasattr(encoder, 'custom_head') and encoder.custom_head is not None:
+             desired_res = getattr(encoder, 'input_resolution', input_resolution)
+             t = preprocess_frame(frame, input_resolution=desired_res).to(encoder.device)
+             with torch.no_grad():
+                 vec = encoder.encode_image_to_vector(t)
+             preds = encoder.predict_custom(vec)
+        elif hasattr(encoder, 'predict'):
+             preds = encoder.predict(frame)
+        elif local_vecs is not None:
+             preds = _compute_predictions(frame, encoder, local_vecs, current_labels, input_resolution)
+             
+        # Heatmap
+        if heatmap_enabled and preds and hasattr(encoder, 'compute_heatmap'):
+            top_label = preds[0][0]
+            top_vec = None
+            if top_label in current_labels and local_vecs is not None:
+                idx = current_labels.index(top_label)
+                top_vec = local_vecs[idx].unsqueeze(0)
+            elif hasattr(encoder, 'encode_labels'):
+                try:
+                    top_vec = encoder.encode_labels([top_label])
+                except:
+                    pass
+                    
+            if hasattr(encoder, 'compute_visualization'):
+                vis = encoder.compute_visualization(frame)
+                frame = vis # Replace
+            elif top_vec is not None:
+                desired_res = getattr(encoder, 'input_resolution', input_resolution)
+                t = preprocess_frame(frame, input_resolution=desired_res).to(encoder.device)
+                hm = encoder.compute_heatmap(t, top_vec)
+                hm_np = hm.detach().cpu().numpy()
+                hm_uint8 = (hm_np * 255).astype(np.uint8)
+                heatmap_img = cv2.applyColorMap(hm_uint8, cv2.COLORMAP_JET)
+                if heatmap_img.shape[:2] != frame.shape[:2]:
+                    heatmap_img = cv2.resize(heatmap_img, (frame.shape[1], frame.shape[0]))
+                frame = cv2.addWeighted(frame, 0.6, heatmap_img, 0.4, 0)
+                
+    except Exception as e:
+        print(f"Sync inference failed: {e}")
+        
+    return frame, preds
+
+@app.route('/process_frame', methods=['POST'])
+def process_frame_endpoint():
+    file = request.files.get('frame')
+    if not file:
+        return jsonify({'error': 'No frame provided'}), 400
+        
+    try:
+        frame_bytes = file.read()
+        processed_frame, preds = process_frame_sync(frame_bytes)
+        
+        # Encode back to jpg
+        ret, buffer = cv2.imencode('.jpg', processed_frame)
+        import base64
+        img_b64 = base64.b64encode(buffer).decode('utf-8')
+        
+        return jsonify({
+            'success': True,
+            'image': img_b64,
+            'predictions': preds
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 def _compute_predictions(frame, encoder, label_vecs, labels, input_resolution):
@@ -973,6 +1105,27 @@ def comparison_download_dataset():
     name_hash = hashlib.md5(url.encode()).hexdigest()[:8]
     save_path = os.path.join(base_dir, name_hash)
     
+    # Check if dataset already exists
+    # We assume if the folder exists and is not empty, it's valid.
+    # A more robust check would be to look for specific files or a 'completed' flag.
+    if os.path.exists(save_path) and os.listdir(save_path):
+        # Try to find the dataset root inside
+        found_path = save_path
+        for root, dirs, files in os.walk(save_path):
+            if ('images' in dirs and 'masks' in dirs) or \
+               ('JPEGImages' in dirs and 'SegmentationClass' in dirs) or \
+               ('rgb' in dirs and 'semantic_class' in dirs) or \
+               ('results' in dirs): # Nice-SLAM
+                found_path = root
+                break
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Dataset already downloaded.', 
+            'path': found_path,
+            'cached': True
+        })
+    
     def run_download():
         try:
             def progress_cb(p):
@@ -1159,6 +1312,8 @@ def set_input_source():
             int(value)
         except:
             return jsonify({'error': 'Webcam index must be an integer'}), 400
+    elif src_type == 'browser_webcam':
+        pass # No validation needed
     elif src_type == 'video':
         # Check if file exists or is URL
         if not (str(value).startswith('http') or os.path.exists(value)):
@@ -1207,9 +1362,36 @@ def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
     inference_thr = threading.Thread(target=inference_loop, args=(label_vecs, labels, (512,512)), daemon=True)
     inference_thr.start()
     
+    # Start HTTPS server in a separate thread
+    https_thr = threading.Thread(target=start_https_server, daemon=True)
+    https_thr.start()
+    
     print(f'Starting web server with encoder: {name} on host {host}:{port}')
     app.run(host=host, port=port, threaded=True)
 
+def start_https_server():
+    """Runs the Flask app with SSL context on port 5443."""
+    try:
+        cert_path = os.path.join(os.path.dirname(__file__), 'cert.pem')
+        key_path = os.path.join(os.path.dirname(__file__), 'key.pem')
+        
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            print(f"Starting HTTPS server on 0.0.0.0:5443")
+            # We need a fresh app instance or just run the same app? 
+            # Flask app.run is blocking. We can run it in a thread.
+            # But app.run is not thread safe? 
+            # Actually, we can just run the same app.
+            
+            # Suppress the "development server" warning for the second instance if possible
+            import logging
+            log = logging.getLogger('werkzeug')
+            # log.setLevel(logging.ERROR) 
+            
+            app.run(host='0.0.0.0', port=5443, ssl_context=(cert_path, key_path), debug=False, use_reloader=False)
+        else:
+            print("SSL certificates not found, skipping HTTPS server.")
+    except Exception as e:
+        print(f"Failed to start HTTPS server: {e}")
 
 if __name__ == '__main__':
     import argparse
