@@ -36,10 +36,21 @@ def optimize_model(model, dtype=None):
                 # For simplicity, let's stick to float32 or whatever the model is,
                 # unless user asks for bf16.
 
-            model = ipex.optimize(model, dtype=dtype)
-            print("Model optimized with IPEX")
+            # Try with inplace=False first as it might be safer for some models
+            # like RADIO which have complex structures
+            try:
+                model = ipex.optimize(model, dtype=dtype, inplace=False)
+                print("Model optimized with IPEX (inplace=False)")
+            except Exception:
+                 # Fallback to default behavior if inplace=False fails for some reason,
+                 # though usually inplace=True is the one that causes issues with frozen layers.
+                 # But let's try to catch the specific error reported: 'NoneType' object has no attribute '_parameters'
+                 model = ipex.optimize(model, dtype=dtype)
+                 print("Model optimized with IPEX (inplace=True)")
+
         except Exception as e:
             print(f"IPEX optimization failed: {e}")
+            print("Continuing without IPEX optimization.")
     return model
 
 def is_cuda_compatible(min_major=7):

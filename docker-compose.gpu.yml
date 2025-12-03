@@ -1,5 +1,6 @@
 services:
   naradio:
+    image: ghcr.io/bjoernellens1/na-radio-standalone:cuda
     privileged: true
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
