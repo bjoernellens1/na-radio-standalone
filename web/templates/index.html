@@ -82,129 +82,152 @@
           </div>
           <div class="card-body">
 
-            <!-- Input Source -->
-            <div class="mb-4">
-              <label class="form-label">Input Source</label>
-              <div class="input-group mb-2">
-                <select class="form-select" id="sourceType" onchange="updateSourceInput()">
-                  <option value="webcam">Webcam</option>
-                  <option value="video">Video File / URL</option>
-                  <option value="folder">Image Folder / File</option>
-                </select>
-              </div>
-              <div class="input-group mb-2">
-                <input type="text" class="form-control" id="sourceValue" placeholder="Device Index (e.g. 0)" value="0">
-                <button class="btn btn-primary" onclick="setInputSource()">Set Source</button>
-              </div>
-              <div class="form-text" id="sourceHelp">Enter camera index (0, 1, ...)</div>
-            </div>
+            <ul class="nav nav-tabs mb-3" id="controlTabs" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
+                  type="button" role="tab">General</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="inference-tab" data-bs-toggle="tab" data-bs-target="#inference"
+                  type="button" role="tab">Inference</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="training-tab" data-bs-toggle="tab" data-bs-target="#training" type="button"
+                  role="tab">Training</button>
+              </li>
+            </ul>
 
-            <!-- Model Selection -->
-            <div class="mb-4">
-              <label for="modelSelect" class="form-label">Model</label>
-              <select class="form-select mb-2" id="modelSelect" onchange="changeModel()">
-                <option value="radio" selected>RADIO-v2.5</option>
-                <option value="siglip">SigLIP</option>
-                <option value="clip">OpenCLIP</option>
-                <option value="dinov2">DINOv2</option>
-                <option value="yolo">Yolo-World</option>
-                <option value="openyolo3d">OpenYOLO3D</option>
-                <option value="resnet">ResNet50 (Fallback)</option>
-              </select>
-              <button class="btn btn-outline-info w-100" onclick="enableOpenVINO()">
-                Enable OpenVINO Acceleration
-              </button>
-            </div>
-
-            <!-- Object Marking -->
-            <div class="mb-4">
-              <div class="mb-3">
-                <label class="form-label">Vocabulary Mode</label>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="vocabMode" id="modeCustom" value="custom" checked
-                    onchange="handleModeChange()">
-                  <label class="form-check-label" for="modeCustom">Custom</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="vocabMode" id="modeImageNet" value="imagenet"
-                    onchange="handleModeChange()">
-                  <label class="form-check-label" for="modeImageNet">ImageNet (1000 classes)</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="vocabMode" id="modeCOCO" value="coco"
-                    onchange="handleModeChange()">
-                  <label class="form-check-label" for="modeCOCO">COCO (80 classes)</label>
-                </div>
-              </div>
-
-              <div class="mb-3">
-                <label for="resolutionSelect" class="form-label">Processing Resolution</label>
-                <select class="form-select" id="resolutionSelect" onchange="updateResolution()">
-                  <option value="1920x1080">1920x1080 (High)</option>
-                  <option value="1280x720">1280x720</option>
-                  <option value="800x600">800x600</option>
-                  <option value="640x480">640x480</option>
-                  <option value="512x512" selected>512x512 (Default)</option>
-                  <option value="320x240">320x240 (Fast)</option>
-                </select>
-              </div>
-
-              <div class="mb-3">
-                <button class="btn btn-warning w-100" onclick="resetInference()">
-                  <i class="bi bi-arrow-counterclockwise"></i> Reset Inference
-                </button>
-              </div>
-
-              <div class="mb-3">
-                <label for="labelInput" class="form-label">Custom Labels (comma-separated)</label>
-                <input type="text" class="form-control" id="labelInput" placeholder="person, car, dog..."
-                  value="person, car, dog, cat, tree">
-              </div>
-              <button class="btn btn-primary w-100 mb-3" onclick="updateLabels()">Update Vocabulary</button>
-
-              <!-- Interactive Training Controls (DINOv2) -->
-              <div id="trainingControls" class="mb-3 d-none">
-                <hr>
-                <h6>Interactive Training</h6>
-                <div class="d-grid gap-2">
-                  <div class="input-group">
-                    <input type="text" class="form-control" id="captureLabel" placeholder="Label (e.g. cup)">
-                    <button class="btn btn-outline-secondary" type="button" onclick="captureSample()">Capture</button>
+            <div class="tab-content" id="controlTabsContent">
+              <!-- General Tab -->
+              <div class="tab-pane fade show active" id="general" role="tabpanel">
+                <!-- Input Source -->
+                <div class="mb-4">
+                  <label class="form-label">Input Source</label>
+                  <div class="input-group mb-2">
+                    <select class="form-select" id="sourceType" onchange="updateSourceInput()">
+                      <option value="webcam">Webcam</option>
+                      <option value="video">Video File / URL</option>
+                      <option value="folder">Image Folder / File</option>
+                    </select>
                   </div>
-                  <div class="d-flex justify-content-between">
-                    <span id="sampleCount" class="text-muted small">Samples: 0</span>
-                    <span id="trainingStatus" class="text-muted small"></span>
+                  <div class="input-group mb-2">
+                    <input type="text" class="form-control" id="sourceValue" placeholder="Device Index (e.g. 0)"
+                      value="0">
+                    <button class="btn btn-primary" onclick="setInputSource()">Set Source</button>
                   </div>
-                  <button class="btn btn-success" onclick="trainClassifier()">Train Classifier</button>
-                  <button class="btn btn-outline-danger btn-sm" onclick="resetClassifier()">Reset Training</button>
+                  <div class="form-text" id="sourceHelp">Enter camera index (0, 1, ...)</div>
                 </div>
 
-                <hr>
-                <h6>Load Dataset</h6>
-                <div class="input-group mb-3">
-                  <input type="text" class="form-control" id="datasetPath" placeholder="/path/to/dataset">
-                  <button class="btn btn-outline-primary" type="button" onclick="loadDataset()">Load</button>
-                </div>
-
-                <hr>
-                <h6>Online Dataset</h6>
-                <div class="mb-3">
-                  <select class="form-select mb-2" id="onlineDsType" onchange="toggleOnlineUrl()">
-                    <option value="cifar10">CIFAR-10 (Python version)</option>
-                    <option value="url">Custom Zip/Tar URL</option>
+                <!-- Model Selection -->
+                <div class="mb-4">
+                  <label for="modelSelect" class="form-label">Model</label>
+                  <select class="form-select mb-2" id="modelSelect" onchange="changeModel()">
+                    <option value="radio" selected>RADIO-v2.5</option>
+                    <option value="siglip">SigLIP</option>
+                    <option value="clip">OpenCLIP</option>
+                    <option value="dinov2">DINOv2</option>
+                    <option value="yolo">Yolo-World</option>
+                    <option value="openyolo3d">OpenYOLO3D</option>
+                    <option value="resnet">ResNet50 (Fallback)</option>
                   </select>
-                  <input type="text" class="form-control mb-2 d-none" id="onlineDsUrl"
-                    placeholder="https://example.com/dataset.zip">
-                  <button class="btn btn-outline-primary w-100" type="button" onclick="downloadDataset()">Download &
-                    Train</button>
                 </div>
               </div>
 
+              <!-- Inference Tab -->
+              <div class="tab-pane fade" id="inference" role="tabpanel">
+                <!-- Vocabulary Mode -->
+                <div class="mb-3">
+                  <label class="form-label">Vocabulary Mode</label>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="vocabMode" id="modeCustom" value="custom" checked
+                      onchange="handleModeChange()">
+                    <label class="form-check-label" for="modeCustom">Custom</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="vocabMode" id="modeImageNet" value="imagenet"
+                      onchange="handleModeChange()">
+                    <label class="form-check-label" for="modeImageNet">ImageNet (1000 classes)</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="vocabMode" id="modeCOCO" value="coco"
+                      onchange="handleModeChange()">
+                    <label class="form-check-label" for="modeCOCO">COCO (80 classes)</label>
+                  </div>
+                </div>
 
-              <hr>
+                <!-- Custom Labels -->
+                <div class="mb-3">
+                  <label for="labelInput" class="form-label">Custom Labels (comma-separated)</label>
+                  <input type="text" class="form-control" id="labelInput" placeholder="person, car, dog..."
+                    value="person, car, dog, cat, tree">
+                </div>
+                <button class="btn btn-primary w-100 mb-3" onclick="updateLabels()">Update Vocabulary</button>
 
-              <div class="d-grid gap-2">
-                <button id="heatmapBtn" class="btn btn-outline-danger" onclick="toggleHeatmap()">Enable Heatmap</button>
+                <!-- Resolution -->
+                <div class="mb-3">
+                  <label for="resolutionSelect" class="form-label">Processing Resolution</label>
+                  <select class="form-select" id="resolutionSelect" onchange="updateResolution()">
+                    <option value="1920x1080">1920x1080 (High)</option>
+                    <option value="1280x720">1280x720</option>
+                    <option value="800x600">800x600</option>
+                    <option value="640x480">640x480</option>
+                    <option value="512x512" selected>512x512 (Default)</option>
+                    <option value="320x240">320x240 (Fast)</option>
+                  </select>
+                </div>
+
+                <div class="d-grid gap-2 mb-3">
+                  <button class="btn btn-outline-info" onclick="enableOpenVINO()">
+                    Enable OpenVINO Acceleration
+                  </button>
+                  <button id="heatmapBtn" class="btn btn-outline-danger" onclick="toggleHeatmap()">Enable
+                    Heatmap</button>
+                  <button class="btn btn-warning" onclick="resetInference()">
+                    <i class="bi bi-arrow-counterclockwise"></i> Reset Inference
+                  </button>
+                </div>
+              </div>
+
+              <!-- Training Tab -->
+              <div class="tab-pane fade" id="training" role="tabpanel">
+                <div id="trainingControls" class="d-none">
+                  <h6>Interactive Training</h6>
+                  <div class="d-grid gap-2 mb-3">
+                    <div class="input-group">
+                      <input type="text" class="form-control" id="captureLabel" placeholder="Label (e.g. cup)">
+                      <button class="btn btn-outline-secondary" type="button" onclick="captureSample()">Capture</button>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                      <span id="sampleCount" class="text-muted small">Samples: 0</span>
+                      <span id="trainingStatus" class="text-muted small"></span>
+                    </div>
+                    <button class="btn btn-success" onclick="trainClassifier()">Train Classifier</button>
+                    <button class="btn btn-outline-danger btn-sm" onclick="resetClassifier()">Reset Training</button>
+                  </div>
+
+                  <hr>
+                  <h6>Load Dataset</h6>
+                  <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="datasetPath" placeholder="/path/to/dataset">
+                    <button class="btn btn-outline-primary" type="button" onclick="loadDataset()">Load</button>
+                  </div>
+
+                  <hr>
+                  <h6>Online Dataset</h6>
+                  <div class="mb-3">
+                    <select class="form-select mb-2" id="onlineDsType" onchange="toggleOnlineUrl()">
+                      <option value="cifar10">CIFAR-10 (Python version)</option>
+                      <option value="url">Custom Zip/Tar URL</option>
+                    </select>
+                    <input type="text" class="form-control mb-2 d-none" id="onlineDsUrl"
+                      placeholder="https://example.com/dataset.zip">
+                    <button class="btn btn-outline-primary w-100" type="button" onclick="downloadDataset()">Download &
+                      Train</button>
+                  </div>
+                </div>
+                <div id="trainingPlaceholder" class="text-muted text-center mt-3">
+                  <small>Select <strong>DINOv2</strong> model to enable training.</small>
+                </div>
               </div>
             </div>
           </div>
@@ -383,10 +406,13 @@
 
         // Show/Hide training controls
         const trainingControls = document.getElementById('trainingControls');
+        const trainingPlaceholder = document.getElementById('trainingPlaceholder');
         if (model === 'dinov2') {
           trainingControls.classList.remove('d-none');
+          if (trainingPlaceholder) trainingPlaceholder.classList.add('d-none');
         } else {
           trainingControls.classList.add('d-none');
+          if (trainingPlaceholder) trainingPlaceholder.classList.remove('d-none');
         }
 
         fetch('/change_model', {
