@@ -10,8 +10,8 @@ import time
 # Add parent dir to path to import encoders
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from encoders import NARadioEncoder, DINOv2Encoder, NADINOv2Encoder, DINOv3Encoder, NADINOv3Encoder
-from utils import get_device
+from na_radio.encoders import NARadioEncoder, DINOv2Encoder, NADINOv2Encoder, DINOv3Encoder, NADINOv3Encoder
+from na_radio.utils import get_device
 
 class ModelComparator:
     def __init__(self, models=['naclip', 'radio'], device=None):

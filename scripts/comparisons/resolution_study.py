@@ -8,8 +8,8 @@ import os
 # Add parent dir to path to import encoders
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from encoders import NARadioEncoder, DINOv2Encoder, NADINOv2Encoder, DINOv3Encoder, NADINOv3Encoder
-from utils import get_device
+from na_radio.encoders import NARadioEncoder, DINOv2Encoder, NADINOv2Encoder, DINOv3Encoder, NADINOv3Encoder
+from na_radio.utils import get_device
 
 def evaluate_resolution(encoder_name, resolutions, device=None):
     if device is None:

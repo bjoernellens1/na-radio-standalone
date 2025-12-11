@@ -9,7 +9,7 @@ from timm.layers import use_fused_attn
 from typing_extensions import override
 import cv2
 
-from utils import get_device, preprocess_frame, optimize_model
+from .utils import get_device, preprocess_frame, optimize_model, is_cuda_compatible
 
 try:
     import openvino as ov
@@ -1349,6 +1349,114 @@ class YoloWorldEncoder(LangSpatialGlobalImageEncoder):
                 # plot() returns BGR numpy array
                 return results[0].plot()
         return frame
+
+
+def load_encoder(preferred='radio', device: Optional[str] = None, input_resolution=(512,512), force_gpu: bool = False, min_cc: float = 7.0):
+  """Try to load RADIO via the NARadioEncoder; if not possible, fallback to ResNet.
+  Returns an encoder instance and a short string describing it.
+  """
+  # Determine device
+  if device is None:
+      device = get_device()
+  
+  print(f"Loading encoder '{preferred}' on {device}...")
+
+  if preferred == 'radio':
+      try:
+          # Check GPU compatibility for RADIO
+          if device.startswith('cuda') and not force_gpu:
+              if not is_cuda_compatible(min_major=int(min_cc)):
+                   print(f"GPU compute capability too low for RADIO (requires >={min_cc}). Falling back to CPU/ResNet or forcing CPU.")
+      
+          enc = NARadioEncoder(device=device, input_resolution=input_resolution, return_radio_features=False, use_naclip=True)
+          return enc, "RADIO-v2.5"
+      except Exception as e:
+          print(f"Failed to load RADIO: {e}")
+          print("Falling back to CLIP...")
+          preferred = 'clip'
+
+  if preferred == 'radio_no_naclip':
+      try:
+          # Check GPU compatibility for RADIO
+          if device.startswith('cuda') and not force_gpu:
+              if not is_cuda_compatible(min_major=int(min_cc)):
+                   print(f"GPU compute capability too low for RADIO (requires >={min_cc}). Falling back to CPU/ResNet or forcing CPU.")
+      
+          enc = NARadioEncoder(device=device, input_resolution=input_resolution, return_radio_features=False, use_naclip=False)
+          return enc, "RADIO-v2.5-NoNACLIP"
+      except Exception as e:
+          print(f"Failed to load RADIO: {e}")
+          print("Falling back to CLIP...")
+          preferred = 'clip'
+
+  if preferred == 'siglip':
+      try:
+          enc = SigLIPEncoder(device=device, input_resolution=input_resolution)
+          return enc, "SigLIP-ViT-SO400M"
+      except Exception as e:
+          print(f"Failed to load SigLIP: {e}")
+          preferred = 'clip'
+
+  if preferred == 'dinov2':
+      try:
+          # DINOv2 requires resolution multiple of 14 (patch size). 518 = 14 * 37.
+          enc = DINOv2Encoder(device=device, input_resolution=(518, 518))
+          return enc, "DINOv2-ViT-S-14"
+
+      except Exception as e:
+          print(f"Failed to load DINOv2: {e}")
+          preferred = 'resnet'
+
+  if preferred == 'nadino':
+      try:
+          # DINOv2 requires resolution multiple of 14 (patch size). 518 = 14 * 37.
+          enc = NADINOv2Encoder(device=device, input_resolution=(518, 518))
+          return enc, "NADINOv2-ViT-S-14"
+
+      except Exception as e:
+          print(f"Failed to load NADINOv2: {e}")
+          preferred = 'resnet'
+
+  if preferred == 'dinov3':
+      try:
+          enc = DINOv3Encoder(device=device, input_resolution=(512, 512))
+          return enc, "DINOv3-ViT-S-16"
+      except Exception as e:
+          print(f"Failed to load DINOv3: {e}")
+          preferred = 'resnet'
+
+  if preferred == 'nadino3':
+      try:
+          enc = NADINOv3Encoder(device=device, input_resolution=(512, 512))
+          return enc, "NADINOv3-ViT-S-16"
+      except Exception as e:
+          print(f"Failed to load NADINOv3: {e}")
+          preferred = 'resnet'
+
+  if preferred == 'yolo':
+      try:
+          enc = YoloWorldEncoder(device=device)
+          return enc, "Yolo-World-v8s"
+      except Exception as e:
+          print(f"Failed to load Yolo-World: {e}")
+          preferred = 'resnet'
+
+
+  if preferred == 'clip':
+      try:
+          enc = CLIPFallbackEncoder(device=device, input_resolution=input_resolution)
+          return enc, "CLIP-ViT-B-32"
+      except Exception as e:
+          print(f"Failed to load CLIP: {e}")
+          print("Falling back to ResNet...")
+          preferred = 'resnet'
+
+  if preferred == 'resnet':
+      enc = FallbackResNetEncoder(device=device, input_resolution=input_resolution)
+      return enc, "ResNet50-Fallback"
+  
+  raise ValueError(f"Unknown encoder preference: {preferred}")
+
 
 
 

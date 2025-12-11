@@ -9,8 +9,8 @@ from typing import List
 # Add parent dir to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from encoders import NARadioEncoder, DINOv2Encoder, NADINOv2Encoder, DINOv3Encoder, NADINOv3Encoder
-from utils import get_device
+from na_radio.encoders import NARadioEncoder, DINOv2Encoder, NADINOv2Encoder, DINOv3Encoder, NADINOv3Encoder
+from na_radio.utils import get_device
 
 def evaluate_semantic(encoder_name, image_dir, labels, device=None):
     if device is None:
