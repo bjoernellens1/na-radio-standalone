@@ -1,0 +1,19 @@
+ade20k:
+  path: data/ade20k
+  resolutions: [256, 512, 1024]
+  num_classes: 150
+
+voc2012:
+  path: data/VOCdevkit/VOC2012
+  resolutions: [256, 512]
+  num_classes: 21
+
+coco2017:
+  path: data/coco-2017
+  split: validation
+  num_classes: 80
+
+imagenet:
+  path: data/imagenet
+  split: val
+  num_classes: 1000

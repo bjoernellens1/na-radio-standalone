@@ -1,0 +1,30 @@
+models:
+  radio:
+    type: radio
+    default_resolution: [512, 512]
+    patch_size: 16
+  
+  radio_no_naclip:
+    type: radio_no_naclip
+    default_resolution: [512, 512]
+    patch_size: 16
+
+  dinov2:
+    type: dinov2
+    default_resolution: [518, 518]
+    patch_size: 14
+
+  nadino:
+    type: nadino
+    default_resolution: [518, 518]
+    patch_size: 14
+
+  dinov3:
+    type: dinov3
+    default_resolution: [512, 512]
+    patch_size: 16
+
+  nadino3:
+    type: nadino3
+    default_resolution: [512, 512]
+    patch_size: 16

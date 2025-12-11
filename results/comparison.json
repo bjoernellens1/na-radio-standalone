@@ -1,0 +1,32 @@
+{
+  "256": {
+    "radio": {
+      "inference_time": 0.5926364660263062,
+      "embedding_dim": 0
+    },
+    "nadino": {
+      "inference_time": 0.018839478492736816,
+      "embedding_dim": 0
+    }
+  },
+  "512": {
+    "radio": {
+      "inference_time": 1.271292805671692,
+      "embedding_dim": 0
+    },
+    "nadino": {
+      "inference_time": 0.01187121868133545,
+      "embedding_dim": 0
+    }
+  },
+  "1024": {
+    "radio": {
+      "inference_time": 4.461654424667358,
+      "embedding_dim": 0
+    },
+    "nadino": {
+      "inference_time": 0.05865144729614258,
+      "embedding_dim": 0
+    }
+  }
+}

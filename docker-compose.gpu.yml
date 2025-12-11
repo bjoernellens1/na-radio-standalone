@@ -9,8 +9,14 @@ services:
     ports:
       - "5000:5000"
       - "5443:5443"
+    # devices:
+    #   - nvidia.com/gpu=all
     devices:
-      - nvidia.com/gpu=all
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      # - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+      # - /dev/nvidia-modeset:/dev/nvidia-modeset
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      # - NVIDIA_VISIBLE_DEVICES=all
+      # - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video

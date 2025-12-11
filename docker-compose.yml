@@ -30,7 +30,7 @@ services:
       - hf-cache:/root/.cache/huggingface
       - ./downloaded_datasets:/app/test_images/downloaded_datasets
       - ./web:/app/web
-      - /dev:/dev
+      # - /dev:/dev
     devices:
       - "/dev/video0:/dev/video0"
 

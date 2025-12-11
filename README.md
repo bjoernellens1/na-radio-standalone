@@ -101,6 +101,28 @@ docker build \
 - **CUDA Errors**: Ensure you are using `TARGET_ARCH=nvidia` and have passed the GPU to the container (`--gpus all` or via compose).
 - **Webcam**: If no webcam is found, map the device correctly (e.g., `/dev/video0`) or use a video file via `VIDEO_FILE` env var.
 
+## Evaluation Framework
+
+### Models Supported
+- **NACLIP**: NACLIP attention injection into CLIP/RADIO models.
+- **RADIO**: NVlabs RADIO model (v2.5).
+- **DINOv2/v3**: Self-supervised vision transformers (v3 as placeholder/experimental).
+- **NADINO**: DINOv2/v3 with NACLIP attention injection.
+
+### Research Timeline
+- **Phase 1**: Literature review (deadline: Jan 15)
+- **Phase 2**: Comparison scripts (deadline: Jan 22)
+- **Phase 3**: GUI integration (deadline: Jan 29)
+- **Phase 4**: Presentation ready (deadline: Jan 31)
+
+### Running Comparisons
+```bash
+python scripts/comparisons/embedding_comparison.py \
+  --models naclip radio \
+  --resolutions 256 512 1024 \
+  --output results/comparison.json
+```
+
 ## Contributing
 
 Issues and pull requests are welcome. Useful areas:

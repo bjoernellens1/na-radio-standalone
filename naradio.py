@@ -28,7 +28,7 @@ import cv2
 import matplotlib.pyplot as plt
 
 from utils import get_device, preprocess_frame, cosine_similarity_matrix, pca_2d_projection, is_cuda_compatible
-from encoders import NARadioEncoder, FallbackResNetEncoder, CLIPFallbackEncoder, SigLIPEncoder, DINOv2Encoder, YoloWorldEncoder, LangSpatialGlobalImageEncoder
+from encoders import NARadioEncoder, FallbackResNetEncoder, CLIPFallbackEncoder, SigLIPEncoder, DINOv2Encoder, YoloWorldEncoder, LangSpatialGlobalImageEncoder, NADINOv2Encoder, DINOv3Encoder, NADINOv3Encoder
 
 def load_encoder(preferred='radio', device: Optional[str] = None, input_resolution=(512,512), force_gpu: bool = False, min_cc: float = 7.0):
   """Try to load RADIO via the NARadioEncoder; if not possible, fallback to ResNet.
@@ -47,8 +47,22 @@ def load_encoder(preferred='radio', device: Optional[str] = None, input_resoluti
               if not is_cuda_compatible(min_major=int(min_cc)):
                    print(f"GPU compute capability too low for RADIO (requires >={min_cc}). Falling back to CPU/ResNet or forcing CPU.")
       
-          enc = NARadioEncoder(device=device, input_resolution=input_resolution, return_radio_features=False)
+          enc = NARadioEncoder(device=device, input_resolution=input_resolution, return_radio_features=False, use_naclip=True)
           return enc, "RADIO-v2.5"
+      except Exception as e:
+          print(f"Failed to load RADIO: {e}")
+          print("Falling back to CLIP...")
+          preferred = 'clip'
+
+  if preferred == 'radio_no_naclip':
+      try:
+          # Check GPU compatibility for RADIO
+          if device.startswith('cuda') and not force_gpu:
+              if not is_cuda_compatible(min_major=int(min_cc)):
+                   print(f"GPU compute capability too low for RADIO (requires >={min_cc}). Falling back to CPU/ResNet or forcing CPU.")
+      
+          enc = NARadioEncoder(device=device, input_resolution=input_resolution, return_radio_features=False, use_naclip=False)
+          return enc, "RADIO-v2.5-NoNACLIP"
       except Exception as e:
           print(f"Failed to load RADIO: {e}")
           print("Falling back to CLIP...")
@@ -70,6 +84,32 @@ def load_encoder(preferred='radio', device: Optional[str] = None, input_resoluti
 
       except Exception as e:
           print(f"Failed to load DINOv2: {e}")
+          preferred = 'resnet'
+
+  if preferred == 'nadino':
+      try:
+          # DINOv2 requires resolution multiple of 14 (patch size). 518 = 14 * 37.
+          enc = NADINOv2Encoder(device=device, input_resolution=(518, 518))
+          return enc, "NADINOv2-ViT-S-14"
+
+      except Exception as e:
+          print(f"Failed to load NADINOv2: {e}")
+          preferred = 'resnet'
+
+  if preferred == 'dinov3':
+      try:
+          enc = DINOv3Encoder(device=device, input_resolution=(512, 512))
+          return enc, "DINOv3-ViT-S-16"
+      except Exception as e:
+          print(f"Failed to load DINOv3: {e}")
+          preferred = 'resnet'
+
+  if preferred == 'nadino3':
+      try:
+          enc = NADINOv3Encoder(device=device, input_resolution=(512, 512))
+          return enc, "NADINOv3-ViT-S-16"
+      except Exception as e:
+          print(f"Failed to load NADINOv3: {e}")
           preferred = 'resnet'
 
   if preferred == 'yolo':
@@ -104,7 +144,7 @@ if __name__ == "__main__":
   parser.add_argument("--labels", type=str, default="person,cat,dog,chair,plant", help="Comma separated labels")
   parser.add_argument("--no-plot", action="store_true", help="Disable embedding plot")
   parser.add_argument("--video-file", type=str, default=None, help="Path to video file")
-  parser.add_argument("--encoder", type=str, default="radio", help="Preferred encoder: radio, clip, resnet")
+  parser.add_argument("--encoder", type=str, default="radio", help="Preferred encoder: radio, radio_no_naclip, nadino, dinov3, nadino3, clip, resnet")
   parser.add_argument("--device", type=str, default=None, help="Device (cuda or cpu)")
   
   args = parser.parse_args()

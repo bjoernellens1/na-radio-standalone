@@ -118,6 +118,7 @@ class GaussKernelAttn(nn.Module):
     dim: int,
     qk_norm: bool = False,
     num_prefix_tokens: int = 8,
+    patch_size: int = 16,
   ) -> None:
     super().__init__()
     num_heads = orig_attn.num_heads
@@ -127,9 +128,10 @@ class GaussKernelAttn(nn.Module):
     self.scale = self.head_dim ** -0.5
     self.fused_attn = use_fused_attn()
     self.input_resolution = input_resolution
+    self.patch_size = patch_size
 
     h, w = input_resolution
-    n_patches = (w // 16, h //16)
+    n_patches = (w // patch_size, h // patch_size)
     window_size = [side * 2 - 1 for side in n_patches]
     window = GaussKernelAttn.gaussian_window(*window_size, std=gauss_std,
                                              device=device)
@@ -224,7 +226,7 @@ class GaussKernelAttn(nn.Module):
 
   def update_input_resolution(self, input_resolution):
     h, w = input_resolution
-    n_patches = (w // 16, h //16)
+    n_patches = (w // self.patch_size, h // self.patch_size)
     window_size = [side * 2 - 1 for side in n_patches]
     window = GaussKernelAttn.gaussian_window(*window_size, std=self.gauss_std,
                                              device=self.device)
@@ -492,6 +494,7 @@ class NARadioEncoder(LangSpatialGlobalImageEncoder):
                input_resolution: Tuple[int,int] = [512,512],
                gauss_std: float = 7.0,
                return_radio_features: bool = True,
+               use_naclip: bool = True,
                compile: bool = True,
                amp: bool = True):
     
@@ -538,15 +541,18 @@ class NARadioEncoder(LangSpatialGlobalImageEncoder):
     # We want to control when that happens.
     self.lang_adaptor = self.model.adaptors[lang_model]
     self.model.adaptors = None
-    last_block = self.model.model.blocks[-1]
-    last_block.attn = GaussKernelAttn(
-      last_block.attn,
-      input_resolution,
-      gauss_std,
-      dim=self.model.model.embed_dim,
-      chosen_cls_id=self.lang_adaptor.head_idx,
-      device=self.device,
-      num_prefix_tokens=self.model.num_summary_tokens)
+    
+    if use_naclip:
+        last_block = self.model.model.blocks[-1]
+        last_block.attn = GaussKernelAttn(
+          last_block.attn,
+          input_resolution,
+          gauss_std,
+          dim=self.model.model.embed_dim,
+          chosen_cls_id=self.lang_adaptor.head_idx,
+          device=self.device,
+          num_prefix_tokens=self.model.num_summary_tokens,
+          patch_size=16)
 
     self.times = list()
     if self.compile:
@@ -1045,6 +1051,127 @@ class DINOv2Encoder(LangSpatialGlobalImageEncoder):
                 return torch.zeros(rgb_image.shape[-2:], device=self.device)
         
         return torch.zeros(rgb_image.shape[-2:], device=self.device)
+
+
+class NADINOv2Encoder(DINOv2Encoder):
+    """DINOv2 with NACLIP attention injection (NADINO)."""
+    def __init__(self, device: str = None, model_name="dinov2_vits14", input_resolution=(518, 518), gauss_std=7.0):
+        super().__init__(device, model_name, input_resolution)
+        self.gauss_std = gauss_std
+        
+        # Inject GaussKernelAttn into the last block
+        # DINOv2 structure: model.blocks is a nn.Sequential or ModuleList
+        try:
+            last_block = self.model.blocks[-1]
+            # DINOv2 attention is usually 'attn'
+            if hasattr(last_block, 'attn'):
+                # We need to wrap it.
+                # GaussKernelAttn expects: orig_attn, input_resolution, gauss_std, device, chosen_cls_id, dim, qk_norm, num_prefix_tokens
+                # DINOv2 doesn't have multiple CLS tokens usually, just 1 (index 0).
+                # DINOv2 usually has registers (4 registers + 1 CLS = 5 prefix tokens) in v2? 
+                # Or just 1 CLS in v1/v2 base?
+                # dinov2_vits14 usually has 1 CLS token + registers if enabled.
+                # Let's check num_prefix_tokens.
+                # DINOv2 implementation in timm or hub might differ.
+                # Assuming standard ViT from facebookresearch/dinov2 hub:
+                # It uses nested tensors?
+                
+                # We need to know the dim.
+                dim = last_block.attn.qkv.in_features
+                
+                # num_prefix_tokens: DINOv2 usually 1 (CLS) + registers (4). 
+                # But hub model might be different.
+                # Let's assume 1 for now or try to detect.
+                # We can check patch_embed.
+                
+                num_prefix_tokens = 1 # Default for ViT
+                if hasattr(self.model, 'n_tokens'):
+                     num_prefix_tokens = self.model.n_tokens
+                elif hasattr(self.model, 'num_prefix_tokens'):
+                     num_prefix_tokens = self.model.num_prefix_tokens
+                
+                # chosen_cls_id: DINOv2 is self-supervised, no language alignment head index.
+                # But GaussKernelAttn uses it to center the gaussian?
+                # Wait, GaussKernelAttn in encoders.py uses chosen_cls_id?
+                # Let's check GaussKernelAttn implementation again.
+                # It seems it doesn't use chosen_cls_id in forward?
+                # Ah, it's passed to __init__ but maybe not used?
+                # Checking GaussKernelAttn code...
+                # self.chosen_cls_id = chosen_cls_id
+                # It is NOT used in forward or anywhere else in the provided code snippet!
+                # So we can pass 0.
+                
+                last_block.attn = GaussKernelAttn(
+                    last_block.attn,
+                    input_resolution,
+                    gauss_std,
+                    device=self.device,
+                    chosen_cls_id=0,
+                    dim=dim,
+                    num_prefix_tokens=num_prefix_tokens,
+                    patch_size=14
+                )
+                print("Successfully injected NACLIP attention into DINOv2.")
+            else:
+                print("Could not find 'attn' in last block of DINOv2. NACLIP injection failed.")
+        except Exception as e:
+            print(f"Failed to inject NACLIP into DINOv2: {e}")
+
+
+class DINOv3Encoder(DINOv2Encoder):
+    """DINOv3 Encoder."""
+    def __init__(self, device: str = None, model_name="dinov3_vits16", input_resolution=(512, 512)):
+        # DINOv2Encoder init loads dinov2. We need to override it completely or be careful.
+        # We'll just copy the init logic but use dinov3 hub.
+        LangSpatialGlobalImageEncoder.__init__(self, device)
+        self.input_resolution = input_resolution
+        try:
+            self.model = torch.hub.load('facebookresearch/dinov3', model_name, pretrained=True)
+        except Exception as e:
+            print(f"Failed to load DINOv3 weights: {e}")
+            print("Loading DINOv3 without pretrained weights...")
+            self.model = torch.hub.load('facebookresearch/dinov3', model_name, pretrained=False)
+            
+        self.model.eval()
+        self.model = self.model.to(self.device)
+        self.model = optimize_model(self.model)
+
+
+class NADINOv3Encoder(DINOv3Encoder):
+    """DINOv3 with NACLIP attention injection (NADINO)."""
+    def __init__(self, device: str = None, model_name="dinov3_vits16", input_resolution=(512, 512), gauss_std=7.0):
+        super().__init__(device, model_name, input_resolution)
+        self.gauss_std = gauss_std
+        
+        # Inject GaussKernelAttn into the last block
+        try:
+            # DINOv3 structure: model.blocks
+            last_block = self.model.blocks[-1]
+            if hasattr(last_block, 'attn'):
+                # DINOv3 attn has qkv, proj.
+                dim = last_block.attn.qkv.in_features
+                
+                # num_prefix_tokens: DINOv3?
+                # DINOv3 has registers.
+                # The mismatch was 1029 vs 1025. 1025 = 32*32 + 1. 1029 = 32*32 + 5.
+                # So 4 registers + 1 CLS = 5 prefix tokens.
+                num_prefix_tokens = 5
+                
+                last_block.attn = GaussKernelAttn(
+                    last_block.attn,
+                    input_resolution,
+                    gauss_std,
+                    device=self.device,
+                    chosen_cls_id=0,
+                    dim=dim,
+                    num_prefix_tokens=num_prefix_tokens,
+                    patch_size=16 # DINOv3 vits16
+                )
+                print("Successfully injected NACLIP attention into DINOv3.")
+            else:
+                print("Could not find 'attn' in last block of DINOv3. NACLIP injection failed.")
+        except Exception as e:
+            print(f"Failed to inject NACLIP into DINOv3: {e}")
 
 
     def reset_custom_head(self):
