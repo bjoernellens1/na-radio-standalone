@@ -13,6 +13,8 @@ if str(proj_root) not in sys.path:
 
 from na_radio.manager import Manager
 
+print("DEBUG: Running modified naradio_web.py from bjoernl workspace")
+
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
 # Global Manager instance
@@ -148,6 +150,7 @@ def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
     )
     manager.start()
     
+    print(f"DEBUG: start_server called with host={host}, port={port}")
     print(f'Starting web server on host {host}:{port}')
     try:
         app.run(host=host, port=port, threaded=True)
