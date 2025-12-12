@@ -18,7 +18,7 @@ print("DEBUG: Running modified naradio_web.py from bjoernl workspace")
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=2, x_host=2, x_prefix=2)
 
 # Global Manager instance
 manager = None
@@ -33,6 +33,7 @@ def get_manager():
 
 @app.route('/')
 def index():
+    print("DEBUG HEADERS:", request.headers)
     return render_template('index.html')
 
 def gen_frames():
