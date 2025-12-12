@@ -114,7 +114,7 @@
                   <div class="input-group mb-2">
                     <select class="form-select" id="sourceType" onchange="updateSourceInput()">
                       <option value="browser_webcam" selected>Browser Webcam</option>
-                      <option value="webcam">Server Webcam (/dev/video0)</option>
+                      <!-- <option value="webcam">Server Webcam (/dev/video0)</option> -->
                       <option value="video">Video File / URL</option>
                       <option value="folder">Image Folder / File</option>
                     </select>
@@ -802,9 +802,10 @@
           const serverImg = document.getElementById('serverVideoFeed');
 
           // Hide server feed, show canvas
+          // Hide server feed, show video immediately
           serverImg.style.display = 'none';
-          canvas.style.display = 'block';
-          // video.style.display = 'block'; // We draw to canvas, so video can stay hidden or used for debug
+          canvas.style.display = 'none';
+          video.style.display = 'block';
 
           // Use 'environment' facing mode for mobile rear cameras
           const constraints = {

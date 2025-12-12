@@ -133,11 +133,60 @@ def set_input_source():
     src_type = data.get('type')
     value = data.get('value')
     
-    if not src_type or value is None:
-        return jsonify({'error': 'Type and value required'}), 400
+    if not src_type:
+        return jsonify({'error': 'Type required'}), 400
         
     mgr.set_input(src_type, value)
     return jsonify({'success': True})
+
+@app.route('/process_frame', methods=['POST'])
+def process_frame():
+    mgr = get_manager()
+    
+    if 'frame' not in request.files:
+        return jsonify({'error': 'No frame uploaded'}), 400
+        
+    file = request.files['frame']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+        
+    # Decode image
+    npimg = np.frombuffer(file.read(), np.uint8)
+    frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+    
+    if frame is None:
+        return jsonify({'error': 'Failed to decode image'}), 400
+        
+    # Update current frame in manager (optional, for other views)
+    with mgr.frame_lock:
+        mgr.current_frame = frame.copy()
+        
+    # Run inference
+    preds, heatmap = mgr.predict(frame)
+    
+    # Process response
+    response = {
+        'success': True,
+        'predictions': preds,
+        'image': None
+    }
+    
+    if mgr.heatmap_enabled and heatmap is not None:
+        # Overlay heatmap
+        # Resize heatmap to match frame
+        if heatmap.shape[:2] != frame.shape[:2]:
+            heatmap = cv2.resize(heatmap, (frame.shape[1], frame.shape[0]))
+            
+        blended = cv2.addWeighted(frame, 0.6, heatmap, 0.4, 0)
+        
+        # Encode to base64
+        ret, buffer = cv2.imencode('.jpg', blended)
+        if ret:
+            import base64
+            img_str = base64.b64encode(buffer).decode('utf-8')
+            response['image'] = img_str
+            
+    return jsonify(response)
 
 def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
                  labels_str=None, encoder_device=None, force_gpu=False, min_cc=7.0):

@@ -17,8 +17,8 @@ from .inputs import ImageFolderCapture
 class Manager:
     def __init__(self, device_index=0, video_file=None, labels=None, encoder_name='radio', device=None):
         self.input_config = {
-            'type': 'webcam',
-            'value': device_index,
+            'type': 'browser_webcam',
+            'value': None,
             'update_needed': False
         }
         if video_file:
@@ -150,16 +150,8 @@ class Manager:
             print(f"Opening source: {src_type} = {val}")
             try:
                 if src_type == 'webcam':
-                    dev_path = f"/dev/video{val}"
-                    if not os.path.exists(dev_path):
-                        print(f"Camera device {dev_path} not found.")
-                        cap = None
-                    else:
-                        try:
-                            cap = cv2.VideoCapture(int(val))
-                        except Exception as e:
-                            print(f"Failed to open webcam {val}: {e}")
-                            cap = None
+                    print("Server-side webcam is disabled. Use browser webcam.")
+                    cap = None
                 elif src_type == 'video':
                     try:
                         cap = cv2.VideoCapture(val)
@@ -231,10 +223,106 @@ class Manager:
                 
             time.sleep(0.001)
 
-    def _inference_loop(self):
-        retry_interval = 5.0
-        next_label_retry = 0.0
+    def predict(self, frame):
+        """
+        Run inference on a single frame synchronously.
+        Returns (predictions, heatmap)
+        """
+        if frame is None:
+            return [], None
+
+        # Check if encoder is loaded
+        encoder = None
+        with self.model_lock:
+            encoder = self.current_encoder
         
+        if encoder is None:
+            return [], None
+
+        preds = []
+        heatmap = None
+        
+        # Label updates
+        if self.label_update_needed:
+            with self.label_vecs_lock:
+                self.current_label_vecs = None
+            self.label_update_needed = False
+            print(f"Labels updated: {self.labels}")
+
+        encoder = None
+        with self.model_lock:
+            encoder = self.current_encoder
+
+        if encoder is not None and self.labels:
+            with self.inference_lock:
+                now = time.time()
+                
+                # Compute label vecs
+                need_compute = False
+                with self.label_vecs_lock:
+                    if self.current_label_vecs is None:
+                        need_compute = True
+                        
+                if need_compute:
+                    try:
+                        if hasattr(encoder, 'encode_labels'):
+                            # print("Encoding labels...")
+                            vecs = encoder.encode_labels(self.labels)
+                            with self.label_vecs_lock:
+                                self.current_label_vecs = vecs
+                            self.predictions_enabled = True
+                            # print("Labels encoded.")
+                        else:
+                            # Encoder doesn't support labels (e.g. Yolo might handle differently)
+                            pass
+                    except Exception as e:
+                        print(f"Failed to encode labels: {e}")
+                
+                # Predict
+                try:
+                    t0 = time.time()
+                    local_vecs = None
+                    with self.label_vecs_lock:
+                        local_vecs = self.current_label_vecs
+                        
+                    if hasattr(encoder, 'predict'):
+                        preds = encoder.predict(frame)
+                    elif local_vecs is not None:
+                        # Default cosine similarity
+                        desired_res = getattr(encoder, 'input_resolution', (512, 512))
+                        t = preprocess_frame(frame, input_resolution=desired_res).to(encoder.device)
+                        with torch.no_grad():
+                            vec = encoder.encode_image_to_vector(t)
+                            sims = cosine_similarity_matrix(vec, local_vecs)
+                            sims = sims.cpu().numpy()[0]
+                        
+                        pairs = list(zip(self.labels, sims.tolist()))
+                        pairs.sort(key=lambda x: x[1], reverse=True)
+                        preds = pairs[:5]
+                        
+                    self.last_inference_time = (time.time() - t0) * 1000
+                    
+                    # Heatmap logic (simplified)
+                    if self.heatmap_enabled and preds and hasattr(encoder, 'compute_heatmap'):
+                         # ... (Heatmap implementation similar to original)
+                         # For now, let's assume compute_heatmap returns a heatmap image
+                         # This part was missing implementation in original code too, 
+                         # but let's try to call it if it exists.
+                         try:
+                             # Assuming compute_heatmap takes frame and text/label
+                             # This is model specific.
+                             # For now, just return None or placeholder if not fully implemented
+                             pass
+                         except Exception as e:
+                             print(f"Heatmap computation failed: {e}")
+
+                except Exception as e:
+                    print(f"Inference failed: {e}")
+                    preds = []
+
+        return preds, heatmap
+
+    def _inference_loop(self):
         while self.running:
             frame_to_process = None
             with self.frame_lock:
@@ -244,88 +332,16 @@ class Manager:
             if frame_to_process is None:
                 time.sleep(0.1)
                 continue
-
-            # Check if encoder is loaded
-            encoder = None
-            with self.model_lock:
-                encoder = self.current_encoder
             
-            if encoder is None:
-                # Model not loaded, sleep and wait
+            # If input type is browser_webcam, we don't run loop inference, 
+            # we rely on explicit calls to predict() from web server.
+            # But if we are in video mode, we might want this loop.
+            # Let's check input type.
+            input_type = self.input_config['type']
+            if input_type == 'browser_webcam':
                 time.sleep(0.5)
                 continue
 
-            preds = []
-            
-            # Label updates
-            if self.label_update_needed:
-                with self.label_vecs_lock:
-                    self.current_label_vecs = None
-                self.label_update_needed = False
-                print(f"Labels updated: {self.labels}")
-
-            encoder = None
-            with self.model_lock:
-                encoder = self.current_encoder
-
-            if encoder is not None and self.labels:
-                with self.inference_lock:
-                    now = time.time()
-                    
-                    # Compute label vecs
-                    need_compute = False
-                    with self.label_vecs_lock:
-                        if self.current_label_vecs is None:
-                            need_compute = True
-                            
-                    if need_compute and now >= next_label_retry:
-                        next_label_retry = now + retry_interval
-                        try:
-                            if hasattr(encoder, 'encode_labels'):
-                                print("Encoding labels...")
-                                vecs = encoder.encode_labels(self.labels)
-                                with self.label_vecs_lock:
-                                    self.current_label_vecs = vecs
-                                self.predictions_enabled = True
-                                print("Labels encoded.")
-                            else:
-                                # Encoder doesn't support labels (e.g. Yolo might handle differently)
-                                pass
-                        except Exception as e:
-                            print(f"Failed to encode labels: {e}")
-                    
-                    # Predict
-                    try:
-                        t0 = time.time()
-                        local_vecs = None
-                        with self.label_vecs_lock:
-                            local_vecs = self.current_label_vecs
-                            
-                        if hasattr(encoder, 'predict'):
-                            preds = encoder.predict(frame_to_process)
-                        elif local_vecs is not None:
-                            # Default cosine similarity
-                            desired_res = getattr(encoder, 'input_resolution', (512, 512))
-                            t = preprocess_frame(frame_to_process, input_resolution=desired_res).to(encoder.device)
-                            with torch.no_grad():
-                                vec = encoder.encode_image_to_vector(t)
-                                sims = cosine_similarity_matrix(vec, local_vecs)
-                                sims = sims.cpu().numpy()[0]
-                            
-                            pairs = list(zip(self.labels, sims.tolist()))
-                            pairs.sort(key=lambda x: x[1], reverse=True)
-                            preds = pairs[:5]
-                            
-                        self.last_inference_time = (time.time() - t0) * 1000
-                        
-                        # Heatmap logic (simplified)
-                        if self.heatmap_enabled and preds and hasattr(encoder, 'compute_heatmap'):
-                             # ... (Heatmap implementation similar to original)
-                             pass
-
-                    except Exception as e:
-                        print(f"Inference failed: {e}")
-                        preds = []
-
+            preds, _ = self.predict(frame_to_process)
             self.current_pred = preds
             time.sleep(0.01)
