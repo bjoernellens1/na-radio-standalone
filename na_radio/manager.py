@@ -199,7 +199,12 @@ class Manager:
             print(f"Opening source: {src_type} = {val}")
             try:
                 if src_type == 'webcam':
-                    cap = cv2.VideoCapture(int(val))
+                    dev_path = f"/dev/video{val}"
+                    if not os.path.exists(dev_path):
+                        print(f"Camera device {dev_path} not found.")
+                        cap = None
+                    else:
+                        cap = cv2.VideoCapture(int(val))
                 elif src_type == 'video':
                     cap = cv2.VideoCapture(val)
                 elif src_type == 'image' or src_type == 'folder':
