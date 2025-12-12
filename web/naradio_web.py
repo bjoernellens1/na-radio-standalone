@@ -149,7 +149,15 @@ def start_server(host='0.0.0.0', port=5000, device_index=0, video_file=None,
     manager.start()
     
     print(f'Starting web server on host {host}:{port}')
-    app.run(host=host, port=port, threaded=True)
+    try:
+        app.run(host=host, port=port, threaded=True)
+    except Exception as e:
+        print(f"Failed to start server on {host}:{port}: {e}")
+        if host != '0.0.0.0':
+            print("Falling back to 0.0.0.0")
+            app.run(host='0.0.0.0', port=port, threaded=True)
+        else:
+            raise e
 
 if __name__ == '__main__':
     import argparse

@@ -204,9 +204,17 @@ class Manager:
                         print(f"Camera device {dev_path} not found.")
                         cap = None
                     else:
-                        cap = cv2.VideoCapture(int(val))
+                        try:
+                            cap = cv2.VideoCapture(int(val))
+                        except Exception as e:
+                            print(f"Failed to open webcam {val}: {e}")
+                            cap = None
                 elif src_type == 'video':
-                    cap = cv2.VideoCapture(val)
+                    try:
+                        cap = cv2.VideoCapture(val)
+                    except Exception as e:
+                        print(f"Failed to open video {val}: {e}")
+                        cap = None
                 elif src_type == 'image' or src_type == 'folder':
                     cap = ImageFolderCapture(val)
                 elif src_type == 'browser_webcam':
